@@ -2,9 +2,10 @@ import { env } from 'cloudflare:workers';
 import { getChatGPTUser } from '../../chatgpt-auth';
 export const dynamic = 'force-dynamic';
 const allowed = new Set(['getDashboard','runAnalysis','saveSettings','setAuto','cancelPlan','diagnostics','testNotification','installNitiTriggers']);
+const publicAllowed = new Set(['getDashboard','runAnalysis','diagnostics']);
 export async function POST(request: Request) {
   const json = (value: unknown, status=200) => Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
-  if (!await getChatGPTUser()) return json({error:'กรุณาเข้าสู่ระบบก่อนใช้งาน'},401);
+  const user = await getChatGPTUser();
   if (request.headers.get('origin') !== new URL(request.url).origin) return json({error:'คำขอไม่ถูกต้อง'},403);
   const settings=env as unknown as Record<string,string>;
   if(!settings.GAS_BRIDGE_URL || !settings.GAS_BRIDGE_SECRET) return json({error:'กำลังเตรียมการเชื่อมต่อ Google กรุณารอการตั้งค่าให้เสร็จก่อนวิเคราะห์'},503);
@@ -13,6 +14,7 @@ export async function POST(request: Request) {
     if(body.length>16000) return json({error:'คำขอใหญ่เกินไป'},413);
     const data=JSON.parse(body);
     if(!allowed.has(data.fn)||!Array.isArray(data.args)) return json({error:'คำสั่งไม่รองรับ'},400);
+    if(!user && !publicAllowed.has(data.fn)) return json({error:'คำสั่งผู้ดูแลต้องเข้าสู่ระบบบัญชีเจ้าของ'},401);
     const payload=JSON.stringify({fn:data.fn,args:data.args,time:Date.now(),nonce:crypto.randomUUID()});
     const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(settings.GAS_BRIDGE_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']);
     const sig=await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(payload));

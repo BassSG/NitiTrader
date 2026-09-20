@@ -1,7 +1,6 @@
-import { getChatGPTUser } from "../chatgpt-auth";
 import { documentHtml } from "./document";
-export async function GET(request: Request){
- if(!await getChatGPTUser()) return Response.redirect(new URL("/signin-with-chatgpt?return_to=/desk",request.url));
+export const dynamic = "force-dynamic";
+export async function GET(){
  const brandedHtml=documentHtml
   .replace('href="/favicon.svg"','href="/niti-trader-logo.png"')
   .replace('<div class="mark">N</div>','<div class="mark"><img src="/niti-trader-logo.png" alt="Niti Trader"></div>')
