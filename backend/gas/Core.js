@@ -113,13 +113,13 @@ var NitiCore = (function () {
       var entry=round(side===1?z.hi-(z.hi-z.lo)*depth:z.lo+(z.hi-z.lo)*depth,cfg.tick);
       var dist=(quote-entry)*side;
       if(dist<Math.max(cfg.tick*2,cfg.spread)){reject('Entry อยู่ใกล้ราคาเกินไปหรืออยู่ผิดฝั่ง',z);return;}
-      if(dist>ind.atr*3){reject('โซนอยู่ไกลเกิน ATR 3',z);return;}
+      if(dist>ind.atr*(number(cfg.maxEntryATR)?Number(cfg.maxEntryATR):3)){reject('โซนอยู่ไกลเกิน ATR '+(number(cfg.maxEntryATR)?Number(cfg.maxEntryATR):3),z);return;}
       var stop=round(side===1?z.lo-ind.atr*.25:z.hi+ind.atr*.25,cfg.tick),risk=Math.abs(entry-stop);
-      if(risk<ind.atr*.35){reject('ระยะ SL สั้นกว่า ATR ขั้นต่ำ',z);return;}
-      if(risk>ind.atr*2.5){reject('ระยะ SL กว้างกว่า ATR สูงสุด',z);return;}
+      if(risk<ind.atr*(number(cfg.minRiskATR)?Number(cfg.minRiskATR):.35)){reject('ระยะ SL สั้นกว่า ATR ขั้นต่ำ',z);return;}
+      if(risk>ind.atr*(number(cfg.maxRiskATR)?Number(cfg.maxRiskATR):2.5)){reject('ระยะ SL กว้างกว่า ATR สูงสุด',z);return;}
       var obstacles=zs.filter(function(x){return x.side===-side;}).map(function(x){return side===1?x.lo:x.hi;}).filter(function(x){return (x-entry)*side>0;}).sort(function(a,b){return side*(a-b);});
       if(!obstacles.length){reject('ไม่มีโซนฝั่งตรงข้ามสำหรับวาง TP',z);return;}
-      var tp=round(entry+side*Math.min(risk*2.2,Math.abs(obstacles[0]-entry)-ind.atr*.10),cfg.tick);
+      var tp=round(entry+side*Math.min(risk*2.2,Math.abs(obstacles[0]-entry)-ind.atr*(number(cfg.tpBufferATR)?Number(cfg.tpBufferATR):.10)),cfg.tick);
       var rr=(Math.abs(tp-entry)-cfg.spread-cfg.slippage)/(risk+cfg.spread+cfg.slippage);
       if((tp-entry)*side<=0){reject('พื้นที่ถึง TP ไม่พอหลังหักระยะกันชน',z);return;}
       if(rr<cfg.minRR){reject('Net R:R ต่ำกว่า '+cfg.minRR,z);return;}

@@ -49,7 +49,7 @@ assert.equal(expiredDuringClosure.plan.status, 'EXPIRED', 'plans must expire eve
 const candidateAudit = core.candidates(
   Array.from({ length: 80 }, (_, index) => ({ t: index * 900000, o: 100 + (index % 4), h: 103 + (index % 4), l: 97 + (index % 4), c: 100 + (index % 4) })),
   100,
-  { tick: 0.01, spread: 0.05, slippage: 0.02, minRR: 1.2, minScore: 60, expiryHours: 6 },
+  { tick: 0.01, spread: 0.05, slippage: 0.02, minRR: 1.1, minScore: 52, expiryHours: 6, maxEntryATR: 3.5, minRiskATR: 0.30, maxRiskATR: 2.8, tpBufferATR: 0.07 },
   80 * 900000
 );
 assert.ok(candidateAudit.candidateAudit, 'candidate rejection audit must be present');

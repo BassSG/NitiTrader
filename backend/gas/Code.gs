@@ -1,6 +1,6 @@
 /* NITI TRADER — CONFIGURATION / ตั้งค่าที่นี่ก่อน */
 const NITI = {
-  NAME: 'Niti Trader', VERSION: '1.3.0', ENGINE: 'Niti Structure v1',
+  NAME: 'Niti Trader', VERSION: '1.4.0', ENGINE: 'Niti Structure v1 · Balanced',
   SHEET_ID: '1tqWZGrETUTIuzu-MbZsipGFGeGKMkq1P6Q4Oz6biqpk',
   TIMEZONE: 'Asia/Bangkok',
   // Recommended: Project Settings > Script Properties. Never put keys in HTML.
@@ -10,7 +10,10 @@ const NITI = {
   // FMP naive datetime: UTC / America/New_York (DST) / EST_FIXED.
   // Run diagnostics with your key, inspect date vs quote epoch, then confirm in Settings.
   FMP_TIMEZONE: 'America/New_York', FMP_TIMEZONE_CONFIRMED: false,
-  MIN_RR: 1.5, MIN_SCORE: 60, EXPIRY_HOURS: 6,
+  // Balanced profile: more opportunities while preserving Limit-only, SL/TP and no-repaint rules.
+  MIN_RR: 1.1, MIN_SCORE: 52, EXPIRY_HOURS: 6,
+  MAX_ENTRY_ATR: 3.5, MIN_RISK_ATR: 0.30, MAX_RISK_ATR: 2.8, TP_BUFFER_ATR: 0.07,
+  PROFILE_VERSION: 'BALANCED_1.4',
   MAX_DAILY_AI_USD: 2.0, MAX_AI_CALLS_PER_DAY: 40,
   MAX_QUOTE_AGE_MINUTES: 10, MAX_BAR_AGE_MINUTES: 35,
   // Closed-market planning uses the last verified close only within this window.
@@ -35,6 +38,12 @@ function cfg_(){
   c.AUTO=p.AUTO_ENABLED==='true'; c.AUTO_SYMBOLS=(p.AUTO_SYMBOLS||'XAUUSD').split(',').filter(s=>c.SYMBOLS[s]);
   ['MIN_RR','MIN_SCORE','EXPIRY_HOURS','MAX_DAILY_AI_USD'].forEach(k=>{if(NitiCore.number(p[k]))c[k]=Number(p[k]);});
   Object.keys(c.SYMBOLS).forEach(s=>{['spread','slippage'].forEach(k=>{const key=s+'_'+k.toUpperCase();if(NitiCore.number(p[key]))c.SYMBOLS[s][k]=Number(p[key]);});});
+  if(p.NITI_PROFILE_VERSION!==c.PROFILE_VERSION){
+    const oldPair=Number(p.MIN_RR)===1.2&&Number(p.MIN_SCORE)===60;
+    const next={NITI_PROFILE_VERSION:c.PROFILE_VERSION};
+    if(oldPair){c.MIN_RR=NITI.MIN_RR;c.MIN_SCORE=NITI.MIN_SCORE;next.MIN_RR=String(NITI.MIN_RR);next.MIN_SCORE=String(NITI.MIN_SCORE);}
+    PropertiesService.getScriptProperties().setProperties(next,false);
+  }
   return c;
 }
 function doGet(){return HtmlService.createHtmlOutputFromFile('index').setTitle(NITI.NAME).addMetaTag('viewport','width=device-width, initial-scale=1, viewport-fit=cover');}
@@ -115,7 +124,7 @@ function quality_(m,c,now,allowPlanning){
   const recent=m.bars15.slice(-16);for(let i=1;i<recent.length;i++)if(recent[i].t-recent[i-1].t!==900000){let closedGap=true;for(let t=recent[i-1].t+900000;t<recent[i].t;t+=900000)if(autoSession_(m.symbol,t).open){closedGap=false;break;}if(!closedGap)throw new Error('แท่ง M15 ล่าสุดขาดช่วง ต้องรอข้อมูลต่อเนื่อง');}
   return {closed:closed,blocked:false,quoteAgeMinutes:quoteAge/60000,barAgeMinutes:barAge/60000,reason:closed?'ใช้ราคาปิดล่าสุดเพื่อวางแผนล่วงหน้า':'ราคาและแท่งปิดสดตามเกณฑ์'};
 }
-function symbolCfg_(symbol,c){return Object.assign({},c.SYMBOLS[symbol],{minRR:c.MIN_RR,minScore:c.MIN_SCORE,expiryHours:c.EXPIRY_HOURS});}
+function symbolCfg_(symbol,c){return Object.assign({},c.SYMBOLS[symbol],{minRR:c.MIN_RR,minScore:c.MIN_SCORE,expiryHours:c.EXPIRY_HOURS,maxEntryATR:c.MAX_ENTRY_ATR,minRiskATR:c.MIN_RISK_ATR,maxRiskATR:c.MAX_RISK_ATR,tpBufferATR:c.TP_BUFFER_ATR});}
 function session_(now){const h=Number(Utilities.formatDate(new Date(now),'Asia/Bangkok','H'));return h<12?'ASIA':h<19?'EUROPE':'US';}
 function nextOpen_(symbol,from){let t=Math.ceil(from/900000)*900000;for(let i=0;i<8*24*4;i++){if(autoSession_(symbol,t).open)return t;t+=900000;}return from;}
 function candidateReason_(audit){
@@ -281,7 +290,7 @@ function saveSettings(input){
 function getDashboard(){
   owner_();const c=cfg_(),plans=plans_(),runRows=rows_('NT_Runs',100),runs=runRows.slice().reverse().map(r=>({id:r[0],time:r[1] instanceof Date?r[1].getTime():null,symbol:r[2],price:NitiCore.number(r[3])?Number(r[3]):null,status:r[4],reason:r[5],cost:NitiCore.number(r[6])?Number(r[6]):null,costStatus:r[7],model:r[10],quoteAt:r[12] instanceof Date?r[12].getTime():null}));
   const contexts={};let context=null;runRows.slice().reverse().forEach(r=>{if(!r[16])return;try{const parsed=JSON.parse(r[16]);if(!context)context=parsed;if(parsed.symbol&&!contexts[parsed.symbol])contexts[parsed.symbol]=parsed;}catch(e){}});
-  return {name:NITI.NAME,version:NITI.VERSION,engine:NITI.ENGINE,timezone:NITI.TIMEZONE,now:Date.now(),auto:c.AUTO,lastRun:Number(props_().getProperty('LAST_RUN'))||null,ready:{fmp:!!c.FMP_API_KEY,ai:!!c.OPENROUTER_API_KEY,telegram:!!(c.TELEGRAM_BOT_TOKEN&&c.TELEGRAM_CHAT_ID),timezone:c.FMP_TIMEZONE_CONFIRMED},settings:{MIN_RR:c.MIN_RR,MIN_SCORE:c.MIN_SCORE,EXPIRY_HOURS:c.EXPIRY_HOURS,MAX_DAILY_AI_USD:c.MAX_DAILY_AI_USD,FMP_TIMEZONE:c.FMP_TIMEZONE,FMP_TIMEZONE_CONFIRMED:c.FMP_TIMEZONE_CONFIRMED,AUTO_SYMBOLS:c.AUTO_SYMBOLS,symbols:c.SYMBOLS},plans:plans.slice(-500).reverse(),stats:NitiCore.stats(plans),runs:runs,context:context,contexts:contexts,sheetUrl:'https://docs.google.com/spreadsheets/d/'+NITI.SHEET_ID+'/edit',health:rows_('NT_Health',15).reverse().map(r=>({time:r[0] instanceof Date?r[0].getTime():null,topic:r[1],detail:r[2]}))};
+  return {name:NITI.NAME,version:NITI.VERSION,engine:NITI.ENGINE,timezone:NITI.TIMEZONE,now:Date.now(),auto:c.AUTO,lastRun:Number(props_().getProperty('LAST_RUN'))||null,ready:{fmp:!!c.FMP_API_KEY,ai:!!c.OPENROUTER_API_KEY,telegram:!!(c.TELEGRAM_BOT_TOKEN&&c.TELEGRAM_CHAT_ID),timezone:c.FMP_TIMEZONE_CONFIRMED},settings:{PROFILE:'BALANCED',MIN_RR:c.MIN_RR,MIN_SCORE:c.MIN_SCORE,EXPIRY_HOURS:c.EXPIRY_HOURS,MAX_DAILY_AI_USD:c.MAX_DAILY_AI_USD,FMP_TIMEZONE:c.FMP_TIMEZONE,FMP_TIMEZONE_CONFIRMED:c.FMP_TIMEZONE_CONFIRMED,AUTO_SYMBOLS:c.AUTO_SYMBOLS,symbols:c.SYMBOLS},plans:plans.slice(-500).reverse(),stats:NitiCore.stats(plans),runs:runs,context:context,contexts:contexts,sheetUrl:'https://docs.google.com/spreadsheets/d/'+NITI.SHEET_ID+'/edit',health:rows_('NT_Health',15).reverse().map(r=>({time:r[0] instanceof Date?r[0].getTime():null,topic:r[1],detail:r[2]}))};
 }
 function diagnostics(symbol){
   owner_();const c=cfg_(),now=Date.now(),out={time:now,symbol:symbol||'XAUUSD',checks:[],cost:0,costStatus:'NOT_CALLED'};

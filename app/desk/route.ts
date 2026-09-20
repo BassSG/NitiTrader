@@ -8,6 +8,7 @@ export async function GET(){
   .replace('<div class="clock"><b id="clock">—</b><span id="today">เวลาไทย · UTC+7</span></div>','<div class="top-actions"><button class="btn small install-btn" id="installBtn" type="button">ติดตั้งแอป</button><div class="clock"><b id="clock">—</b><span id="today">เวลาไทย · UTC+7</span></div></div>')
   .replace('</style><link rel="icon"','</style><style>.top-actions{display:flex;align-items:center;gap:12px}.install-btn{color:var(--gold);border-color:#6b5934;background:#211d16}.install-btn[hidden]{display:none}@media(max-width:700px){.top-actions{align-items:flex-end;gap:8px}.install-btn{font-size:12px;padding:8px 10px}}</style><link rel="icon"')
   .replace('<link rel="manifest" href="/manifest.webmanifest">','<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/niti-trader-icon-192.png"><script src="/niti-enhancements.js"></script>')
+  .replace('settings:{MIN_RR:1.5,MIN_SCORE:60,EXPIRY_HOURS:6,MAX_DAILY_AI_USD:2,','settings:{PROFILE:"BALANCED",MIN_RR:1.1,MIN_SCORE:52,EXPIRY_HOURS:6,MAX_DAILY_AI_USD:2,')
   .replace('</script></body></html>',`</script><script>
 (function(){
   if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(function(){});});}
