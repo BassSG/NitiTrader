@@ -8,8 +8,8 @@ export const metadata: Metadata = {
     "codex-preview": "development",
   },
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: "/niti-trader-logo.png",
+    shortcut: "/niti-trader-logo.png",
   },
 };
 

@@ -1,1 +1,1 @@
-{"name":"Niti Trader","short_name":"Niti Trader","start_url":"/desk","display":"standalone","background_color":"#0b1217","theme_color":"#0b1217","icons":[{"src":"/favicon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]}
+{"name":"Niti Trader","short_name":"Niti Trader","start_url":"/desk","display":"standalone","background_color":"#0b1217","theme_color":"#0b1217","icons":[{"src":"/niti-trader-logo.png","sizes":"1024x1024","type":"image/png","purpose":"any maskable"}]}
