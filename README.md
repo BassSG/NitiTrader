@@ -30,6 +30,7 @@ Requirements: Node.js `>=22.13.0`.
 
 ```bash
 npm ci
+npm run test:core
 npm run lint
 npm run typecheck
 npm run build
