@@ -106,26 +106,32 @@ var NitiCore = (function () {
   function candidates(bars,quote,cfg,now) {
     var ind=indicators(bars),hour=aggregate(bars,4,900000),four=aggregate(bars,16,900000);
     var h1=hour.length>=60?indicators(hour):null,h4=four.length>=60?indicators(four):null;
-    var zs=zones(bars,ind.atr),plans=[];
+    var zs=zones(bars,ind.atr),plans=[],rejectedCounts={},rejectedSamples=[];
+    function reject(reason,z){rejectedCounts[reason]=(rejectedCounts[reason]||0)+1;if(rejectedSamples.length<12)rejectedSamples.push({candidateId:z.id,type:z.type,family:z.family,reason:reason});}
     zs.forEach(function(z){
       var side=z.side,depth=z.family==='PIVOT'?.25:z.tests===0?(z.quality>=.78?.33:.45):.52;
       var entry=round(side===1?z.hi-(z.hi-z.lo)*depth:z.lo+(z.hi-z.lo)*depth,cfg.tick);
-      var dist=(quote-entry)*side;if(dist<Math.max(cfg.tick*2,cfg.spread)||dist>ind.atr*3)return;
+      var dist=(quote-entry)*side;
+      if(dist<Math.max(cfg.tick*2,cfg.spread)){reject('Entry อยู่ใกล้ราคาเกินไปหรืออยู่ผิดฝั่ง',z);return;}
+      if(dist>ind.atr*3){reject('โซนอยู่ไกลเกิน ATR 3',z);return;}
       var stop=round(side===1?z.lo-ind.atr*.25:z.hi+ind.atr*.25,cfg.tick),risk=Math.abs(entry-stop);
-      if(risk<ind.atr*.35||risk>ind.atr*2.5)return;
+      if(risk<ind.atr*.35){reject('ระยะ SL สั้นกว่า ATR ขั้นต่ำ',z);return;}
+      if(risk>ind.atr*2.5){reject('ระยะ SL กว้างกว่า ATR สูงสุด',z);return;}
       var obstacles=zs.filter(function(x){return x.side===-side;}).map(function(x){return side===1?x.lo:x.hi;}).filter(function(x){return (x-entry)*side>0;}).sort(function(a,b){return side*(a-b);});
-      if(!obstacles.length)return;
+      if(!obstacles.length){reject('ไม่มีโซนฝั่งตรงข้ามสำหรับวาง TP',z);return;}
       var tp=round(entry+side*Math.min(risk*2.2,Math.abs(obstacles[0]-entry)-ind.atr*.10),cfg.tick);
       var rr=(Math.abs(tp-entry)-cfg.spread-cfg.slippage)/(risk+cfg.spread+cfg.slippage);
-      if((tp-entry)*side<=0||rr<cfg.minRR)return;
+      if((tp-entry)*side<=0){reject('พื้นที่ถึง TP ไม่พอหลังหักระยะกันชน',z);return;}
+      if(rr<cfg.minRR){reject('Net R:R ต่ำกว่า '+cfg.minRR,z);return;}
       var same=side===1?'UP':'DOWN',score;
       // Evidence score is deterministic ranking, never a win probability.
       score=35+Math.round((z.quality||.5)*15)+(ind.trend===same?10:0)+(h1&&h1.trend===same?15:0)+(h4&&h4.trend===same?10:0)+(z.tests===0?10:0)+((side===1?ind.rsi<65:ind.rsi>35)?5:0);
-      if(score<cfg.minScore)return;
+      if(score<cfg.minScore){reject('คะแนนหลักฐานต่ำกว่า '+cfg.minScore,z);return;}
       plans.push({candidateId:z.id,side:side===1?'BUY_LIMIT':'SELL_LIMIT',entry:entry,sl:stop,tp:tp,rr:rr,score:score,zone:z,setup:z.family==='PIVOT'?'PIVOT_ZONE_PULLBACK':'EBW_SD_'+z.family,createdAt:now,expiresAt:now+cfg.expiryHours*3600000});
     });
     plans.sort(function(a,b){return b.score-a.score||b.rr-a.rr;});
-    return {indicators:ind,h1:h1,h4:h4,zones:zs,candidates:plans.slice(0,6),coverage:{m15:bars.length,h1:hour.length,h4:four.length}};
+    var selected=plans.slice(0,6);
+    return {indicators:ind,h1:h1,h4:h4,zones:zs,candidates:selected,coverage:{m15:bars.length,h1:hour.length,h4:four.length},candidateAudit:{zonesFound:zs.length,candidatesBeforeLimit:plans.length,candidatesReturned:selected.length,rejectedCounts:rejectedCounts,rejectedSamples:rejectedSamples}};
   }
   function validatePlan(p,quote,cfg) {
     if(!p||![p.entry,p.sl,p.tp,p.expiresAt].every(number))fail('แผนมีตัวเลขไม่ครบ');
@@ -135,23 +141,29 @@ var NitiCore = (function () {
     var rr=(Math.abs(p.tp-p.entry)-cfg.spread-cfg.slippage)/(Math.abs(p.entry-p.sl)+cfg.spread+cfg.slippage);
     if(rr<cfg.minRR)fail('R:R สุทธิไม่ผ่าน');return true;
   }
-  function paper(plan,bars,intervalMs,now) {
-    var p=JSON.parse(JSON.stringify(plan)),events=[];
+  function paper(plan,bars,intervalMs,now,options) {
+    var p=JSON.parse(JSON.stringify(plan)),events=[],opts=options||{},startAt=p.activationAt||p.createdAt;
     if(['PENDING','FILLED'].indexOf(p.status)<0)return {plan:p,events:events};
     var side=p.side==='BUY_LIMIT'?1:-1;
+    function closedAt(t){return typeof opts.isMarketClosedAt==='function'&&opts.isMarketClosedAt(t);}
+    function gapClosed(start,end){
+      if(typeof opts.isMarketClosedAt!=='function')return false;
+      for(var t=start;t<end;t+=intervalMs)if(!closedAt(t))return false;
+      return true;
+    }
     function event(status,t,note){p.status=status;events.push({status:status,time:t,note:note});if(['TP','SL','AMBIGUOUS','EXPIRED'].indexOf(status)>=0)p.closedAt=t;}
+    if(p.status==='PENDING'&&p.expiresAt&&now>=p.expiresAt&&((p.lastChecked||0)>=p.expiresAt||closedAt(p.expiresAt))){event('EXPIRED',p.expiresAt,'หมดอายุระหว่างช่วงตลาดปิดหรือไม่มีแท่งใหม่ที่ต้องตรวจ');return {plan:p,events:events};}
     for(var i=0;i<bars.length;i++) {
-      var b=bars[i];if(b.t+intervalMs<=p.createdAt||b.t<=(p.lastChecked||0)||b.t+intervalMs>now)continue;
-      var expected=p.lastChecked?p.lastChecked+intervalMs:Math.floor(p.createdAt/intervalMs)*intervalMs;
+      var b=bars[i];if(b.t+intervalMs<=startAt||b.t<=(p.lastChecked||0)||b.t+intervalMs>now)continue;
+      var expected=p.lastChecked?p.lastChecked+intervalMs:Math.floor(startAt/intervalMs)*intervalMs;
       if(b.t>expected){
-        // A plan made while the exchange is closed may legitimately see the next
-        // bar after a weekend/session break. Consume that first gap once; later
-        // gaps remain ambiguous and cannot be replayed optimistically.
-        if(p.marketClosedAtCreation&&!p.marketGapConsumed){p.marketGapConsumed=true;expected=b.t;}
+        if(p.status==='PENDING'&&b.t>=p.expiresAt&&gapClosed(expected,b.t)){event('EXPIRED',p.expiresAt,'หมดอายุระหว่างช่วงตลาดปิด');break;}
+        if(gapClosed(expected,b.t)){expected=b.t;}
+        else if(p.marketClosedAtCreation&&!p.marketGapConsumed){p.marketGapConsumed=true;expected=b.t;}
         else{event('AMBIGUOUS',b.t+intervalMs,'DATA GAP: ขาดแท่งระหว่างติดตาม ไม่อนุมานว่าไม่แตะ Entry/SL/TP');break;}
       }
-      if(b.t<p.createdAt){
-        if(side===1?b.l<=p.entry:b.h>=p.entry){event('AMBIGUOUS',b.t+intervalMs,'แท่งคร่อมเวลาสร้างแผน ไม่ทราบว่าแตะ Entry ก่อนหรือหลังสร้าง');break;}
+      if(b.t<startAt){
+        if(side===1?b.l<=p.entry:b.h>=p.entry){event('AMBIGUOUS',b.t+intervalMs,'แท่งคร่อมเวลาเริ่มติดตาม ไม่ทราบว่าแตะ Entry ก่อนหรือหลังเริ่มแผน');break;}
         p.lastChecked=b.t;continue;
       }
       if(p.status==='PENDING'&&b.t>=p.expiresAt){event('EXPIRED',p.expiresAt,'หมดอายุก่อนเข้า');break;}

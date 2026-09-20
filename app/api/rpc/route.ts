@@ -2,7 +2,11 @@ import { env } from 'cloudflare:workers';
 import { getChatGPTUser } from '../../chatgpt-auth';
 export const dynamic = 'force-dynamic';
 const allowed = new Set(['getDashboard','runAnalysis','saveSettings','setAuto','cancelPlan','diagnostics','testNotification','installNitiTriggers']);
-const publicAllowed = new Set(['getDashboard','runAnalysis','diagnostics']);
+const publicAllowed = new Set<string>();
+const adminMethods = new Set(['getDashboard','runAnalysis','saveSettings','setAuto','cancelPlan','diagnostics','testNotification','installNitiTriggers']);
+function adminEmails(settings: Record<string,string>) {
+  return new Set((settings.NITI_ADMIN_EMAILS||'').split(',').map(value=>value.trim().toLowerCase()).filter(Boolean));
+}
 export async function POST(request: Request) {
   const json = (value: unknown, status=200) => Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
   const user = await getChatGPTUser();
@@ -14,7 +18,8 @@ export async function POST(request: Request) {
     if(body.length>16000) return json({error:'คำขอใหญ่เกินไป'},413);
     const data=JSON.parse(body);
     if(!allowed.has(data.fn)||!Array.isArray(data.args)) return json({error:'คำสั่งไม่รองรับ'},400);
-    if(!user && !publicAllowed.has(data.fn)) return json({error:'คำสั่งผู้ดูแลต้องเข้าสู่ระบบบัญชีเจ้าของ'},401);
+    if(!user && !publicAllowed.has(data.fn)) return json({error:'คำสั่งนี้ต้องเข้าสู่ระบบบัญชีที่ได้รับอนุญาต'},401);
+    if(user && adminMethods.has(data.fn) && !adminEmails(settings).has(user.email.toLowerCase())) return json({error:'บัญชีนี้ยังไม่ได้รับสิทธิ์ใช้งาน Niti Trader'},403);
     const payload=JSON.stringify({fn:data.fn,args:data.args,time:Date.now(),nonce:crypto.randomUUID()});
     const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(settings.GAS_BRIDGE_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']);
     const sig=await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(payload));
