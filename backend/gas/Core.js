@@ -122,7 +122,7 @@ var NitiCore = (function () {
     return {regime:regime,reversalConfirmed:reclaim&&breakClose&&momentum,sweepAndReclaim:reclaim,closeBreak:breakClose,stochDirection:momentum};
   }
   function candidates(bars,quote,cfg,now) {
-    var ind=indicators(bars),hour=aggregate(bars,4,900000),four=aggregate(bars,16,900000);
+    var ind=indicators(bars),hour=aggregate(bars,4,900000),four=Array.isArray(cfg.h4Bars)&&cfg.h4Bars.length?cfg.h4Bars:aggregate(bars,16,900000);
     var h1=hour.length>=60?indicators(hour):null,h4=four.length>=60?indicators(four):null;
     var zs=zones(bars,ind.atr),plans=[],rejectedCounts={},rejectedSamples=[];
     var funnel={zones:zs.length,entry:0,risk:0,target:0,rr:0,score:0,direction:0,selected:0};
@@ -165,7 +165,7 @@ var NitiCore = (function () {
     plans.sort(function(a,b){return b.score-a.score||b.rr-a.rr;});
     var selected=plans.slice(0,6);
     funnel.selected=selected.length;
-    return {indicators:ind,h1:h1,h4:h4,zones:zs,candidates:selected,coverage:{m15:bars.length,h1:hour.length,h4:four.length},candidateAudit:{zonesFound:zs.length,candidatesBeforeLimit:plans.length,candidatesReturned:selected.length,funnel:funnel,rejectedCounts:rejectedCounts,rejectedSamples:rejectedSamples}};
+    return {indicators:ind,h1:h1,h4:h4,zones:zs,candidates:selected,coverage:{m15:bars.length,h1:hour.length,h4:four.length,h4Source:Array.isArray(cfg.h4Bars)&&cfg.h4Bars.length?(cfg.h4Source||'EXTERNAL'):'M15_AGGREGATED'},candidateAudit:{zonesFound:zs.length,candidatesBeforeLimit:plans.length,candidatesReturned:selected.length,funnel:funnel,rejectedCounts:rejectedCounts,rejectedSamples:rejectedSamples}};
   }
   function validatePlan(p,quote,cfg) {
     if(!p||![p.entry,p.sl,p.tp,p.expiresAt].every(number))fail('แผนมีตัวเลขไม่ครบ');

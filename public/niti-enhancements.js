@@ -155,7 +155,8 @@
     if (!context) { renderAudit(null);return; }
     var indicator = context.indicators || {}, indicatorHost = document.getElementById('indicators');
     if (indicatorHost) {
-      var readings = [['RSI (14)', fmt(indicator.rsi, 1)], ['Stoch K / D', fmt(indicator.k, 0) + ' / ' + fmt(indicator.d, 0)], ['ATR (14)', fmt(indicator.atr, symbolsWithFiveDecimals[symbol] ? 5 : 2)], ['M15 TREND', indicator.trend || '—'], ['H1 TREND', context.h1 && context.h1.trend || 'ข้อมูลไม่พอ'], ['H4 TREND', context.h4 && context.h4.trend || 'ข้อมูลไม่พอ']];
+      var h4Label=context.h4&&context.h4.trend||'ข้อมูลไม่พอ ('+esc(context.coverage&&context.coverage.h4||0)+'/60)';
+      var readings = [['RSI (14)', fmt(indicator.rsi, 1)], ['Stoch K / D', fmt(indicator.k, 0) + ' / ' + fmt(indicator.d, 0)], ['ATR (14)', fmt(indicator.atr, symbolsWithFiveDecimals[symbol] ? 5 : 2)], ['M15 TREND', indicator.trend || '—'], ['H1 TREND', context.h1 && context.h1.trend || 'ข้อมูลไม่พอ'], ['H4 TREND', h4Label]];
       indicatorHost.innerHTML = readings.map(function (item) { return '<div><span>' + esc(item[0]) + '</span><b>' + esc(item[1]) + '</b></div>'; }).join('');
     }
     var quote = document.getElementById('quotePrice'), quoteTime = document.getElementById('quoteTime');

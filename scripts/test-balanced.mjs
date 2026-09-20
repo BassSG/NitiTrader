@@ -52,6 +52,9 @@ for(let fixture=0;fixture<16;fixture++){
   assert.equal(JSON.stringify(after.candidates.map(clean)),JSON.stringify(before.candidates));
 }
 assert(nonempty>0,'regression fixtures must exercise passing candidates');
+const externalH4=Array.from({length:60},(_,i)=>({t:i*14400000,o:100,h:102,l:99,c:101}));
+const external=live.candidates(bars,103,{...cfg,h4Bars:externalH4,h4Source:'FMP 1H → H4'},now);
+assert(external.h4);assert.equal(external.coverage.h4,60);assert.equal(external.coverage.h4Source,'FMP 1H → H4');
 
 // Paired storage: same snapshot once, both arms validated before saving, no live-plan writes.
 const context={NitiCore:live,NITI:{SHEET_ID:'test',SYMBOLS:{TEST:{}},TRIAL_VERSION:'trial'}};vm.createContext(context);
@@ -76,4 +79,4 @@ ui.window.testAudit({candidateAudit:audited,outcome:{status:'WAIT',reason:'<scri
 assert(card.innerHTML.includes('ทดลอง Balanced ใหม่'));assert(card.innerHTML.includes('เป้าจาก Swing'));
 assert(!card.innerHTML.includes('<script>bad()'));assert(card.innerHTML.includes('&lt;script&gt;'));
 
-console.log('Balanced tests passed: reversal, swing confirmation, TP obstacles, audit, baseline equivalence, isolated paired trials');
+console.log('Balanced tests passed: reversal, swing confirmation, TP obstacles, audit, H4 history, baseline equivalence, isolated paired trials');

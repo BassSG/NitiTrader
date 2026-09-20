@@ -1,6 +1,6 @@
 /* NITI TRADER — CONFIGURATION / ตั้งค่าที่นี่ก่อน */
 const NITI = {
-  NAME: 'Niti Trader', VERSION: '1.5.0', ENGINE: 'Niti Structure v1 · Balanced',
+  NAME: 'Niti Trader', VERSION: '1.6.0', ENGINE: 'Niti Structure v1 · Balanced',
   SHEET_ID: '1tqWZGrETUTIuzu-MbZsipGFGeGKMkq1P6Q4Oz6biqpk',
   TIMEZONE: 'Asia/Bangkok',
   // Recommended: Project Settings > Script Properties. Never put keys in HTML.
@@ -105,7 +105,7 @@ function fetchJson_(url,options,label){
 function fmp_(endpoint,params,c){if(!c.FMP_API_KEY)throw new Error('ยังไม่มี FMP_API_KEY ใน Script Properties');const q=Object.keys(params||{}).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).concat('apikey='+encodeURIComponent(c.FMP_API_KEY)).join('&');return fetchJson_(c.FMP_BASE+'/'+endpoint+'?'+q,null,'FMP '+endpoint);}
 function sourceTimezone_(symbol,c){const sc=c.SYMBOLS[symbol];return sc&&sc.sourceTimezone?sc.sourceTimezone:c.FMP_TIMEZONE;}
 function timezonesReady_(symbols,c){return (symbols||[]).every(s=>{const z=sourceTimezone_(s,c);return z==='UTC'||c.FMP_TIMEZONE_CONFIRMED;});}
-function market_(symbol,c,now){
+function market_(symbol,c,now,withHigherTimeframe){
   const sc=c.SYMBOLS[symbol];if(!sc)throw new Error('Symbol ไม่รองรับ');
   const quotes=fmp_('quote',{symbol:sc.fmp},c),q=Array.isArray(quotes)?quotes[0]:null;
   if(!q||!NitiCore.number(q.price)||Number(q.price)<=0||q.symbol!==sc.fmp)throw new Error('FMP ไม่มี quote ตรงสัญลักษณ์ '+sc.fmp+'; ไม่ใช้ GCUSD แทน XAUUSD');
@@ -113,7 +113,16 @@ function market_(symbol,c,now){
   const raw=fmp_('historical-chart/5min',{symbol:sc.fmp,from:Utilities.formatDate(new Date(now-45*86400000),'UTC','yyyy-MM-dd'),to:Utilities.formatDate(new Date(now+86400000),'UTC','yyyy-MM-dd')},c);
   const normalized=NitiCore.normalize(raw,sourceTimezone,300000,now);
   const bars=normalized.bars.slice(-15000),m15=NitiCore.aggregate(bars,3,300000);
-  return {symbol:symbol,price:Number(q.price),quoteAt:qt,quoteName:q.name||sc.fmp,bars5:bars,bars15:m15,naiveTime:normalized.naive,timezoneConfirmed:!normalized.naive||sourceTimezone==='UTC'||c.FMP_TIMEZONE_CONFIRMED,latestRaw:raw.length?(raw[0].date||raw[0].timestamp):null,latestParsed:normalized.latest,sourceTimezone:sourceTimezone,calls:2};
+  let h4=[],calls=2,higherLatest=null;
+  if(withHigherTimeframe){
+    // FMP's 5-minute response is often too short for 60 completed H4 candles.
+    // Pull compact H1 history only for analysis/diagnostics, then aggregate closed H4 bars.
+    const higherRaw=fmp_('historical-chart/1hour',{symbol:sc.fmp,from:Utilities.formatDate(new Date(now-180*86400000),'UTC','yyyy-MM-dd'),to:Utilities.formatDate(new Date(now+86400000),'UTC','yyyy-MM-dd')},c);
+    const higher=NitiCore.normalize(higherRaw,sourceTimezone,3600000,now);
+    h4=NitiCore.aggregate(higher.bars.slice(-5000),4,3600000);calls++;higherLatest=higher.latest;
+    if(h4.length<60)throw new Error('ข้อมูล H4 จาก FMP ยังไม่ครบ 60 แท่ง (ได้ '+h4.length+')');
+  }
+  return {symbol:symbol,price:Number(q.price),quoteAt:qt,quoteName:q.name||sc.fmp,bars5:bars,bars15:m15,barsH4:h4,h4Source:withHigherTimeframe?'FMP 1H → H4':'ไม่ได้ดึงในรอบติดตาม',higherLatest:higherLatest,naiveTime:normalized.naive,timezoneConfirmed:!normalized.naive||sourceTimezone==='UTC'||c.FMP_TIMEZONE_CONFIRMED,latestRaw:raw.length?(raw[0].date||raw[0].timestamp):null,latestParsed:normalized.latest,sourceTimezone:sourceTimezone,calls:calls};
 }
 function quality_(m,c,now,allowPlanning){
   if(m.naiveTime&&!m.timezoneConfirmed)throw new Error('ตรวจและยืนยัน timezone ของ FMP ในหน้า ตั้งค่า ก่อนออกแผน');
@@ -129,7 +138,7 @@ function quality_(m,c,now,allowPlanning){
   const recent=m.bars15.slice(-16);for(let i=1;i<recent.length;i++)if(recent[i].t-recent[i-1].t!==900000){let closedGap=true;for(let t=recent[i-1].t+900000;t<recent[i].t;t+=900000)if(autoSession_(m.symbol,t).open){closedGap=false;break;}if(!closedGap)throw new Error('แท่ง M15 ล่าสุดขาดช่วง ต้องรอข้อมูลต่อเนื่อง');}
   return {closed:closed,blocked:false,quoteAgeMinutes:quoteAge/60000,barAgeMinutes:barAge/60000,reason:closed?'ใช้ราคาปิดล่าสุดเพื่อวางแผนล่วงหน้า':'ราคาและแท่งปิดสดตามเกณฑ์'};
 }
-function symbolCfg_(symbol,c){return Object.assign({},c.SYMBOLS[symbol],{minRR:c.MIN_RR,minScore:c.MIN_SCORE,expiryHours:c.EXPIRY_HOURS,maxEntryATR:c.MAX_ENTRY_ATR,minRiskATR:c.MIN_RISK_ATR,maxRiskATR:c.MAX_RISK_ATR,tpBufferATR:c.TP_BUFFER_ATR});}
+function symbolCfg_(symbol,c,market){return Object.assign({},c.SYMBOLS[symbol],{minRR:c.MIN_RR,minScore:c.MIN_SCORE,expiryHours:c.EXPIRY_HOURS,maxEntryATR:c.MAX_ENTRY_ATR,minRiskATR:c.MIN_RISK_ATR,maxRiskATR:c.MAX_RISK_ATR,tpBufferATR:c.TP_BUFFER_ATR,h4Bars:market&&market.barsH4||null,h4Source:market&&market.h4Source||null});}
 function session_(now){const h=Number(Utilities.formatDate(new Date(now),'Asia/Bangkok','H'));return h<12?'ASIA':h<19?'EUROPE':'US';}
 function nextOpen_(symbol,from){let t=Math.ceil(from/900000)*900000;for(let i=0;i<8*24*4;i++){if(autoSession_(symbol,t).open)return t;t+=900000;}return from;}
 function candidateReason_(audit){
@@ -179,7 +188,6 @@ function ai_(context,c,runId){
   const d=parseAiDecision_(result,context,runId);
   return {decision:d,cost:cost,costStatus:costStatus,generationId:result.id||'',model:result.model||c.MODEL,input:u.prompt_tokens||0,output:u.completion_tokens||0};
 }
-function notify_(text,c){if(!c.TELEGRAM_BOT_TOKEN||!c.TELEGRAM_CHAT_ID)return false;try{const d=fetchJson_('https://api.telegram.org/bot'+c.TELEGRAM_BOT_TOKEN+'/sendMessage',{method:'post',contentType:'application/json',payload:JSON.stringify({chat_id:c.TELEGRAM_CHAT_ID,text:text})},'Telegram');if(!d.ok)throw new Error('Telegram refused');return true;}catch(e){health_('NOTIFICATION_ERROR',e.message);return false;}}
 function runAnalysis(symbol){owner_();return analyze_(symbol||'XAUUSD','MANUAL',true);}
 function autoSession_(symbol,now){
   // XAUUSD/FX follow the Sunday-evening to Friday-evening New York session,
@@ -207,15 +215,15 @@ function analyze_(symbol,mode,allowClosedPlanning){
   let c=cfg_(),now=Date.now(),id=Utilities.getUuid(),market=null,marketState=null,ai=null,analysis=null,status='ERROR',reason='',plan=null,ctx=null;
   try{
     if(!c.SYMBOLS[symbol])throw new Error('Symbol ไม่รองรับ');
-    market=market_(symbol,c,now);marketState=quality_(market,c,now,allowClosedPlanning);
+    market=market_(symbol,c,now,true);marketState=quality_(market,c,now,allowClosedPlanning);
     if(mode==='AUTO'&&marketState.blocked){
       status='MARKET_CLOSED';reason='Auto หยุด: '+marketState.reason;
     }else{
-      analysis=NitiCore.candidates(market.bars15,market.price,symbolCfg_(symbol,c),now);
+      analysis=NitiCore.candidates(market.bars15,market.price,symbolCfg_(symbol,c,market),now);
       ctx=compactContext_(market,analysis,c,now);ctx.marketState=marketState;
       if(c.BALANCED_TRIAL){
         try{
-          const revised=NitiCore.candidates(market.bars15,market.price,Object.assign({},symbolCfg_(symbol,c),{experimental:true}),now);
+          const revised=NitiCore.candidates(market.bars15,market.price,Object.assign({},symbolCfg_(symbol,c,market),{experimental:true}),now);
           const brief=p=>({candidateId:p.candidateId,side:p.side,entry:p.entry,sl:p.sl,tp:p.tp,rr:p.rr,score:p.score,targetSource:p.targetSource,directionEvidence:p.directionEvidence});
           ctx.comparison={mode:'SHADOW',version:c.TRIAL_VERSION,baseline:analysis.candidateAudit,revised:revised.candidateAudit,
             baselineCandidates:analysis.candidates.map(brief),revisedCandidates:revised.candidates.map(brief)};
@@ -247,7 +255,7 @@ function analyze_(symbol,mode,allowClosedPlanning){
            const activationAt=marketState.closed?nextOpen_(symbol,done):done,expiresAt=activationAt+c.EXPIRY_HOURS*3600000;
            Object.assign(plan,{id:Utilities.getUuid(),symbol:symbol,status:'PENDING',createdAt:done,activationAt:activationAt,expiresAt:expiresAt,reason:reason+(marketState.closed?' · เริ่มติดตามเมื่อเปิดตลาด '+NitiCore.thai(activationAt)+' ไทย':''),risks:ai.decision.risks,session:session_(done),spread:c.SYMBOLS[symbol].spread,slippage:c.SYMBOLS[symbol].slippage,source:'FMP',sourceTimezone:market.sourceTimezone,engine:NITI.ENGINE,version:NITI.VERSION,model:ai.model,aiCost:ai.cost,aiCostStatus:ai.costStatus,runId:id,quoteAtCreation:Number(q),quoteAt:qTime,marketClosedAtCreation:!!marketState.closed,marketGapConsumed:false,lastChecked:0});
           savePlan_(plan,true);event_(plan,'PENDING',done,reason);status=marketState.closed?'PLAN_CLOSED':'PLAN';
-          notify_('Niti Trader · PAPER\n'+symbol+' '+plan.side+'\nEntry '+plan.entry+'\nTP '+plan.tp+'\nSL '+plan.sl+'\nNet R:R '+plan.rr.toFixed(2)+'\nหมดอายุ '+NitiCore.thai(plan.expiresAt)+' ไทย\n'+reason+'\nAI $'+(ai.cost===null?'รอยืนยัน':ai.cost.toFixed(6)),c);
+          notify_(telegramPlanMessage_(plan,ctx,ai,c),c);
           }
         }
       }
@@ -277,7 +285,7 @@ function monitorPlans(){
        const check=NitiCore.paper(p,m.bars5,300000,now,{isMarketClosedAt:t=>!autoSession_(p.symbol,t).open});
       if(p.trialArm){saveTrial_(check.plan,false);return;}
       savePlan_(check.plan,false);
-      check.events.forEach(e=>{event_(p,e.status,e.time,e.note);notify_('Niti Trader · PAPER\n'+p.symbol+' '+p.side+' → '+e.status+'\nEntry '+p.entry+' | TP '+p.tp+' | SL '+p.sl+'\n'+NitiCore.thai(e.time)+' ไทย\n'+e.note,c);});
+      check.events.forEach(e=>{event_(p,e.status,e.time,e.note);notify_(telegramEventMessage_(p,e,c),c);});
     }catch(e){health_('MONITOR '+p.id,e.message);}});
   }finally{lock.releaseLock();}
 }
@@ -321,7 +329,8 @@ function diagnostics(symbol){
   out.checks.push({name:'เวลาไทย',ok:true,detail:NitiCore.thai(now)+' (UTC+7)'});
   try{const sh=SpreadsheetApp.openById(NITI.SHEET_ID);out.checks.push({name:'Google Sheets',ok:sh.getSpreadsheetTimeZone()===NITI.TIMEZONE,detail:sh.getSpreadsheetTimeZone()});}catch(e){out.checks.push({name:'Google Sheets',ok:false,detail:'ไม่มีสิทธิ์ชีต'});}
   try{
-    const m=market_(out.symbol,c,now);out.market=m;out.checks.push({name:'FMP quote / 5m bars',ok:true,detail:m.quoteName+' · '+m.price+' · '+m.bars5.length+' แท่งปิด'});
+    const m=market_(out.symbol,c,now,true);out.market=m;out.checks.push({name:'FMP quote / 5m bars',ok:true,detail:m.quoteName+' · '+m.price+' · '+m.bars5.length+' แท่งปิด'});
+    out.checks.push({name:'บริบท H4',ok:m.barsH4.length>=60,detail:m.h4Source+' · '+m.barsH4.length+' แท่งปิด'});
     out.checks.push({name:'Quote timestamp → ไทย',ok:Math.abs(now-m.quoteAt)<=c.MAX_QUOTE_AGE_MINUTES*60000,detail:NitiCore.thai(m.quoteAt)+' · ต่างจากเครื่อง '+Math.round((now-m.quoteAt)/60000)+' นาที'});
     out.checks.push({name:'เวลาแท่งล่าสุด → ไทย',ok:true,detail:m.bars5.length?NitiCore.thai(m.bars5[m.bars5.length-1].t):'ไม่มีแท่งปิด'});
     out.checks.push({name:'Timezone ต้นทาง',ok:m.timezoneConfirmed,detail:m.sourceTimezone+' · raw '+m.latestRaw+' · '+(m.naiveTime?(m.timezoneConfirmed?'ใช้ timezone ของ symbol':'ต้องยืนยันการตีความ'):'มี epoch/offset')});
@@ -332,7 +341,7 @@ function diagnostics(symbol){
   out.checks.push({name:'OpenRouter key',ok:!!c.OPENROUTER_API_KEY,detail:c.OPENROUTER_API_KEY?'ตั้งค่าแล้ว (ยังไม่เรียกเสียเงิน)':'กรอก OPENROUTER_API_KEY ใน Script Properties'});
   health_('DIAGNOSTICS',JSON.stringify(out.checks));return out;
 }
-function testNotification(){owner_();const c=cfg_();if(!notify_('Niti Trader · ทดสอบการแจ้งเตือน\n'+NitiCore.thai(Date.now())+' เวลาไทย\nข้อความทดสอบ ไม่มีออเดอร์',c))throw new Error('กรอก Telegram token / chat ID และกด Start ที่บอตก่อน');return {ok:true};}
+function testNotification(){owner_();const c=cfg_();if(!notify_(telegramTestMessage_(),c))throw new Error('กรอก Telegram token / chat ID และกด Start ที่บอตก่อน');return {ok:true,format:'HTML'};}
 
 function testOpenRouterBilling(){
   owner_();const c=cfg_(),runId=Utilities.getUuid(),attempt=Utilities.getUuid(),now=Date.now();
