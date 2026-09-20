@@ -44,3 +44,6 @@ next-env.d.ts
 /.codex/
 /outputs/
 /work/
+# Local Apps Script credentials/config; commit only the example file.
+/backend/gas/.clasp.json
+*.tsbuildinfo
