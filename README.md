@@ -4,9 +4,9 @@ Niti Trader is a paper-trading analysis desk built for XAUUSD first, with option
 
 This repository contains the hosted web application and the Google Apps Script backend used by the application.
 
-Live launch: [GitHub Pages](https://basssg.github.io/NitiTrader/) · [Google Apps Script app](https://script.google.com/macros/s/AKfycbwdJeQ44O2m0rTMKoZf0fnMyiqv3V0xe2qyT4-p-jDMRfWQDsmO-fBJ45xHy0ea55Oy/exec)
+Live launch: [Niti Trader on gpt.site](https://niti-trader.ebasswave.chatgpt.site/desk) · [GitHub Pages launcher](https://basssg.github.io/NitiTrader/)
 
-The GitHub Pages URL is the public launch address and opens the deployed Apps Script application. GitHub Pages is static hosting, so the FMP/OpenRouter/Sheets/Telegram work remains inside Apps Script; no private key is copied into the repository.
+The GitHub Pages URL is a public launcher for the gpt.site application. The FMP/OpenRouter/Sheets/Telegram work remains server-side; no private key is copied into the repository.
 
 ## Architecture
 
