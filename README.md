@@ -24,6 +24,8 @@ The browser never receives the FMP, OpenRouter, Telegram, or bridge secret. The 
 
 AI is not called when there is no valid candidate, the market is closed for automatic analysis, data is stale, or the daily AI budget guard blocks the request.
 
+FMP source time is handled per asset: BTCUSD intraday date fields use the DST-aware `America/New_York` zone observed from its quote alignment, while XAUUSD and FX use the configured FMP source timezone. Quote timestamps remain epoch-based.
+
 ## Local web checks
 
 Requirements: Node.js `>=22.13.0`.
