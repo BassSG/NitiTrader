@@ -1,6 +1,6 @@
 /* NITI TRADER — CONFIGURATION / ตั้งค่าที่นี่ก่อน */
 const NITI = {
-  NAME: 'Niti Trader', VERSION: '1.4.0', ENGINE: 'Niti Structure v1 · Balanced',
+  NAME: 'Niti Trader', VERSION: '1.5.0', ENGINE: 'Niti Structure v1 · Balanced',
   SHEET_ID: '1tqWZGrETUTIuzu-MbZsipGFGeGKMkq1P6Q4Oz6biqpk',
   TIMEZONE: 'Asia/Bangkok',
   // Recommended: Project Settings > Script Properties. Never put keys in HTML.
@@ -14,6 +14,7 @@ const NITI = {
   MIN_RR: 1.1, MIN_SCORE: 52, EXPIRY_HOURS: 6,
   MAX_ENTRY_ATR: 3.5, MIN_RISK_ATR: 0.30, MAX_RISK_ATR: 2.8, TP_BUFFER_ATR: 0.07,
   PROFILE_VERSION: 'BALANCED_1.4',
+  BALANCED_TRIAL: true, TRIAL_VERSION: 'BALANCED_TRIAL_1.5',
   MAX_DAILY_AI_USD: 2.0, MAX_AI_CALLS_PER_DAY: 40,
   MAX_QUOTE_AGE_MINUTES: 10, MAX_BAR_AGE_MINUTES: 35,
   // Closed-market planning uses the last verified close only within this window.
@@ -46,7 +47,11 @@ function cfg_(){
   }
   return c;
 }
-function doGet(){return HtmlService.createHtmlOutputFromFile('index').setTitle(NITI.NAME).addMetaTag('viewport','width=device-width, initial-scale=1, viewport-fit=cover');}
+function doGet(){
+  // Public transport for signed Site POSTs must not grant anonymous HTML RPC access.
+  try{owner_();}catch(e){return ContentService.createTextOutput(JSON.stringify({ok:false,error:'เปิด Niti Trader ผ่านเว็บไซต์และเข้าสู่ระบบก่อนใช้งาน'})).setMimeType(ContentService.MimeType.JSON);}
+  return HtmlService.createHtmlOutputFromFile('index').setTitle(NITI.NAME).addMetaTag('viewport','width=device-width, initial-scale=1, viewport-fit=cover');
+}
 function owner_(){
   if(typeof bridgeAuthorized_!=='undefined'&&bridgeAuthorized_)return;
   const expected=props_().getProperty('OWNER_EMAIL');
@@ -206,13 +211,27 @@ function analyze_(symbol,mode,allowClosedPlanning){
     if(mode==='AUTO'&&marketState.blocked){
       status='MARKET_CLOSED';reason='Auto หยุด: '+marketState.reason;
     }else{
+      analysis=NitiCore.candidates(market.bars15,market.price,symbolCfg_(symbol,c),now);
+      ctx=compactContext_(market,analysis,c,now);ctx.marketState=marketState;
+      if(c.BALANCED_TRIAL){
+        try{
+          const revised=NitiCore.candidates(market.bars15,market.price,Object.assign({},symbolCfg_(symbol,c),{experimental:true}),now);
+          const brief=p=>({candidateId:p.candidateId,side:p.side,entry:p.entry,sl:p.sl,tp:p.tp,rr:p.rr,score:p.score,targetSource:p.targetSource,directionEvidence:p.directionEvidence});
+          ctx.comparison={mode:'SHADOW',version:c.TRIAL_VERSION,baseline:analysis.candidateAudit,revised:revised.candidateAudit,
+            baselineCandidates:analysis.candidates.map(brief),revisedCandidates:revised.candidates.map(brief)};
+          ctx.comparison.tracking=recordTrialCohort_(market,analysis,revised,c,now,id,marketState);
+        }catch(e){ctx.trialError=String(e.message||e);health_('BALANCED_TRIAL',ctx.trialError);}
+      }
       const active=plans_().find(p=>p.symbol===symbol&&['PENDING','FILLED'].indexOf(p.status)>=0);
       if(active){status='EXISTING_PLAN';reason='มีแผนล็อกอยู่แล้ว: '+active.id;plan=active;}
       else{
-        analysis=NitiCore.candidates(market.bars15,market.price,symbolCfg_(symbol,c),now);ctx=compactContext_(market,analysis,c,now);ctx.marketState=marketState;
         if(!analysis.candidates.length){status='WAIT';reason='ยังไม่มีโซน Limit ที่ผ่านเกณฑ์ · '+candidateReason_(analysis.candidateAudit);}
         else{
-          ai=ai_(ctx,c,id);reason=ai.decision.reason;status='WAIT';
+          // Keep experimental results out of the main model's decision context.
+          const aiContext=Object.assign({},ctx);delete aiContext.comparison;delete aiContext.trialError;
+          aiContext.candidates=ctx.candidates.map(p=>{const q=Object.assign({},p);delete q.targetSource;delete q.targetReference;delete q.directionEvidence;return q;});
+          aiContext.candidateAudit=Object.assign({},ctx.candidateAudit);delete aiContext.candidateAudit.funnel;
+          ai=ai_(aiContext,c,id);reason=ai.decision.reason;status='WAIT';
           if(ai.decision.decision==='SELECT'){
           plan=JSON.parse(JSON.stringify(analysis.candidates.find(p=>p.candidateId===ai.decision.candidateId)));
            const done=Date.now();if(done-now>120000)throw new Error('ผล AI ช้าเกิน 2 นาที ยกเลิกการออกแผน');
@@ -239,6 +258,7 @@ function analyze_(symbol,mode,allowClosedPlanning){
       // For invalid AI output, recover billable usage from the attempts ledger.
       if(!ai){const cr=rows_('NT_Costs',100).filter(r=>r[2]===id).pop();if(cr)ai={cost:NitiCore.number(cr[4])?Number(cr[4]):null,costStatus:cr[5],generationId:cr[6],model:cr[7],input:cr[8],output:cr[9]};}
       const last=market&&market.bars15.length?market.bars15[market.bars15.length-1].t+900000:null;
+      if(ctx)ctx.outcome={status:status,reason:reason,aiCalled:!!(ai&&ai.decision),aiDecision:ai&&ai.decision?ai.decision.decision:null};
       append_('NT_Runs',[id,new Date(now),symbol,market?market.price:'',status,reason,ai&&ai.cost!==null?ai.cost:'',ai?ai.costStatus:'NOT_CALLED',ai?ai.input:0,ai?ai.output:0,ai?ai.model:c.MODEL,ai?ai.generationId:'',market?date_(market.quoteAt):'',date_(last),market?market.calls:0,NITI.ENGINE+' '+NITI.VERSION,ctx?JSON.stringify(ctx):'']);
       props_().setProperty('LAST_RUN',String(now));
     }finally{lock.releaseLock();}
@@ -248,12 +268,15 @@ function analyze_(symbol,mode,allowClosedPlanning){
 function monitorPlans(){
   const lock=LockService.getScriptLock();if(!lock.tryLock(1000))return;
   try{const c=cfg_(),now=Date.now(),active=plans_().filter(p=>['PENDING','FILLED'].indexOf(p.status)>=0),markets={};
+    try{active.push.apply(active,trialPlans_().filter(p=>['PENDING','FILLED'].indexOf(p.status)>=0));}catch(e){health_('TRIAL_MONITOR',e.message);}
     active.forEach(p=>{try{
       if(!markets[p.symbol])markets[p.symbol]=market_(p.symbol,c,now);
       const m=markets[p.symbol];if(m.naiveTime&&!m.timezoneConfirmed)throw new Error('timezone ยังไม่ยืนยัน');
       if(p.sourceTimezone!==m.sourceTimezone)throw new Error('Timezone เปลี่ยนหลังออกแผน ต้องตรวจประวัติก่อน');
        const start=p.lastChecked||p.activationAt||p.createdAt;if(m.bars5.length&&start<m.bars5[0].t-300000)throw new Error('ประวัติไม่ครอบคลุมแผน หยุดการตัดสินผล');
-       const check=NitiCore.paper(p,m.bars5,300000,now,{isMarketClosedAt:t=>!autoSession_(p.symbol,t).open});savePlan_(check.plan,false);
+       const check=NitiCore.paper(p,m.bars5,300000,now,{isMarketClosedAt:t=>!autoSession_(p.symbol,t).open});
+      if(p.trialArm){saveTrial_(check.plan,false);return;}
+      savePlan_(check.plan,false);
       check.events.forEach(e=>{event_(p,e.status,e.time,e.note);notify_('Niti Trader · PAPER\n'+p.symbol+' '+p.side+' → '+e.status+'\nEntry '+p.entry+' | TP '+p.tp+' | SL '+p.sl+'\n'+NitiCore.thai(e.time)+' ไทย\n'+e.note,c);});
     }catch(e){health_('MONITOR '+p.id,e.message);}});
   }finally{lock.releaseLock();}
@@ -290,7 +313,8 @@ function saveSettings(input){
 function getDashboard(){
   owner_();const c=cfg_(),plans=plans_(),runRows=rows_('NT_Runs',100),runs=runRows.slice().reverse().map(r=>({id:r[0],time:r[1] instanceof Date?r[1].getTime():null,symbol:r[2],price:NitiCore.number(r[3])?Number(r[3]):null,status:r[4],reason:r[5],cost:NitiCore.number(r[6])?Number(r[6]):null,costStatus:r[7],model:r[10],quoteAt:r[12] instanceof Date?r[12].getTime():null}));
   const contexts={};let context=null;runRows.slice().reverse().forEach(r=>{if(!r[16])return;try{const parsed=JSON.parse(r[16]);if(!context)context=parsed;if(parsed.symbol&&!contexts[parsed.symbol])contexts[parsed.symbol]=parsed;}catch(e){}});
-  return {name:NITI.NAME,version:NITI.VERSION,engine:NITI.ENGINE,timezone:NITI.TIMEZONE,now:Date.now(),auto:c.AUTO,lastRun:Number(props_().getProperty('LAST_RUN'))||null,ready:{fmp:!!c.FMP_API_KEY,ai:!!c.OPENROUTER_API_KEY,telegram:!!(c.TELEGRAM_BOT_TOKEN&&c.TELEGRAM_CHAT_ID),timezone:c.FMP_TIMEZONE_CONFIRMED},settings:{PROFILE:'BALANCED',MIN_RR:c.MIN_RR,MIN_SCORE:c.MIN_SCORE,EXPIRY_HOURS:c.EXPIRY_HOURS,MAX_DAILY_AI_USD:c.MAX_DAILY_AI_USD,FMP_TIMEZONE:c.FMP_TIMEZONE,FMP_TIMEZONE_CONFIRMED:c.FMP_TIMEZONE_CONFIRMED,AUTO_SYMBOLS:c.AUTO_SYMBOLS,symbols:c.SYMBOLS},plans:plans.slice(-500).reverse(),stats:NitiCore.stats(plans),runs:runs,context:context,contexts:contexts,sheetUrl:'https://docs.google.com/spreadsheets/d/'+NITI.SHEET_ID+'/edit',health:rows_('NT_Health',15).reverse().map(r=>({time:r[0] instanceof Date?r[0].getTime():null,topic:r[1],detail:r[2]}))};
+  let trials;try{trials=trialDashboard_();}catch(e){trials={error:String(e.message||e)};}
+  return {name:NITI.NAME,version:NITI.VERSION,engine:NITI.ENGINE,timezone:NITI.TIMEZONE,now:Date.now(),auto:c.AUTO,lastRun:Number(props_().getProperty('LAST_RUN'))||null,ready:{fmp:!!c.FMP_API_KEY,ai:!!c.OPENROUTER_API_KEY,telegram:!!(c.TELEGRAM_BOT_TOKEN&&c.TELEGRAM_CHAT_ID),timezone:c.FMP_TIMEZONE_CONFIRMED},settings:{PROFILE:'BALANCED',MIN_RR:c.MIN_RR,MIN_SCORE:c.MIN_SCORE,EXPIRY_HOURS:c.EXPIRY_HOURS,MAX_DAILY_AI_USD:c.MAX_DAILY_AI_USD,FMP_TIMEZONE:c.FMP_TIMEZONE,FMP_TIMEZONE_CONFIRMED:c.FMP_TIMEZONE_CONFIRMED,AUTO_SYMBOLS:c.AUTO_SYMBOLS,symbols:c.SYMBOLS},plans:plans.slice(-500).reverse(),stats:NitiCore.stats(plans),trials:trials,runs:runs,context:context,contexts:contexts,sheetUrl:'https://docs.google.com/spreadsheets/d/'+NITI.SHEET_ID+'/edit',health:rows_('NT_Health',15).reverse().map(r=>({time:r[0] instanceof Date?r[0].getTime():null,topic:r[1],detail:r[2]}))};
 }
 function diagnostics(symbol){
   owner_();const c=cfg_(),now=Date.now(),out={time:now,symbol:symbol||'XAUUSD',checks:[],cost:0,costStatus:'NOT_CALLED'};

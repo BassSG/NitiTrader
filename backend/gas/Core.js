@@ -103,10 +103,30 @@ var NitiCore = (function () {
       });
     }return out;
   }
+  function confirmedSwings(bars) {
+    var out=[],n=3;
+    for(var i=Math.max(n,bars.length-240);i<bars.length-n;i++){
+      var b=bars[i],window=bars.slice(i-n,i+n+1),later=bars.slice(i+n+1);
+      if(window.every(function(x){return x.h<=b.h;})&&window.some(function(x){return x.h<b.h;})&&!later.some(function(x){return x.h>b.h;}))out.push({price:b.h,side:1,knownAt:bars[i+n].t+900000});
+      if(window.every(function(x){return x.l>=b.l;})&&window.some(function(x){return x.l>b.l;})&&!later.some(function(x){return x.l<b.l;}))out.push({price:b.l,side:-1,knownAt:bars[i+n].t+900000});
+    }
+    return out;
+  }
+  function directionEvidence(side,z,bars,ind,h1,h4){
+    var same=side===1?'UP':'DOWN',higher=[h1,h4].filter(Boolean);
+    var regime=!higher.length?'UNKNOWN':higher.every(function(x){return x.trend===same;})?'WITH_TREND':higher.every(function(x){return x.trend!==same;})?'COUNTER_TREND':'MIXED';
+    var last=bars[bars.length-1],prev=bars[bars.length-2];
+    var reclaim=bars.slice(-3).some(function(b){return side===1?b.l<z.lo&&b.c>z.hi:b.h>z.hi&&b.c<z.lo;});
+    var breakClose=side===1?last.c>prev.h&&last.c>last.o:last.c<prev.l&&last.c<last.o;
+    var momentum=number(ind.k)&&number(ind.d)&&(side===1?ind.k>ind.d:ind.k<ind.d);
+    return {regime:regime,reversalConfirmed:reclaim&&breakClose&&momentum,sweepAndReclaim:reclaim,closeBreak:breakClose,stochDirection:momentum};
+  }
   function candidates(bars,quote,cfg,now) {
     var ind=indicators(bars),hour=aggregate(bars,4,900000),four=aggregate(bars,16,900000);
     var h1=hour.length>=60?indicators(hour):null,h4=four.length>=60?indicators(four):null;
     var zs=zones(bars,ind.atr),plans=[],rejectedCounts={},rejectedSamples=[];
+    var funnel={zones:zs.length,entry:0,risk:0,target:0,rr:0,score:0,direction:0,selected:0};
+    var swings=cfg.experimental?confirmedSwings(bars):[];
     function reject(reason,z){rejectedCounts[reason]=(rejectedCounts[reason]||0)+1;if(rejectedSamples.length<12)rejectedSamples.push({candidateId:z.id,type:z.type,family:z.family,reason:reason});}
     zs.forEach(function(z){
       var side=z.side,depth=z.family==='PIVOT'?.25:z.tests===0?(z.quality>=.78?.33:.45):.52;
@@ -114,24 +134,38 @@ var NitiCore = (function () {
       var dist=(quote-entry)*side;
       if(dist<Math.max(cfg.tick*2,cfg.spread)){reject('Entry อยู่ใกล้ราคาเกินไปหรืออยู่ผิดฝั่ง',z);return;}
       if(dist>ind.atr*(number(cfg.maxEntryATR)?Number(cfg.maxEntryATR):3)){reject('โซนอยู่ไกลเกิน ATR '+(number(cfg.maxEntryATR)?Number(cfg.maxEntryATR):3),z);return;}
+      funnel.entry++;
       var stop=round(side===1?z.lo-ind.atr*.25:z.hi+ind.atr*.25,cfg.tick),risk=Math.abs(entry-stop);
       if(risk<ind.atr*(number(cfg.minRiskATR)?Number(cfg.minRiskATR):.35)){reject('ระยะ SL สั้นกว่า ATR ขั้นต่ำ',z);return;}
       if(risk>ind.atr*(number(cfg.maxRiskATR)?Number(cfg.maxRiskATR):2.5)){reject('ระยะ SL กว้างกว่า ATR สูงสุด',z);return;}
+      funnel.risk++;
       var obstacles=zs.filter(function(x){return x.side===-side;}).map(function(x){return side===1?x.lo:x.hi;}).filter(function(x){return (x-entry)*side>0;}).sort(function(a,b){return side*(a-b);});
+      var targetSource='OPPOSING_ZONE';
+      if(!obstacles.length&&cfg.experimental){
+        obstacles=swings.filter(function(x){return x.side===side&&x.knownAt<=now&&(x.price-entry)*side>0;}).map(function(x){return x.price;}).sort(function(a,b){return side*(a-b);});
+        targetSource='CONFIRMED_SWING';
+      }
       if(!obstacles.length){reject('ไม่มีโซนฝั่งตรงข้ามสำหรับวาง TP',z);return;}
+      funnel.target++;
       var tp=round(entry+side*Math.min(risk*2.2,Math.abs(obstacles[0]-entry)-ind.atr*(number(cfg.tpBufferATR)?Number(cfg.tpBufferATR):.10)),cfg.tick);
       var rr=(Math.abs(tp-entry)-cfg.spread-cfg.slippage)/(risk+cfg.spread+cfg.slippage);
       if((tp-entry)*side<=0){reject('พื้นที่ถึง TP ไม่พอหลังหักระยะกันชน',z);return;}
       if(rr<cfg.minRR){reject('Net R:R ต่ำกว่า '+cfg.minRR,z);return;}
+      funnel.rr++;
       var same=side===1?'UP':'DOWN',score;
       // Evidence score is deterministic ranking, never a win probability.
       score=35+Math.round((z.quality||.5)*15)+(ind.trend===same?10:0)+(h1&&h1.trend===same?15:0)+(h4&&h4.trend===same?10:0)+(z.tests===0?10:0)+((side===1?ind.rsi<65:ind.rsi>35)?5:0);
       if(score<cfg.minScore){reject('คะแนนหลักฐานต่ำกว่า '+cfg.minScore,z);return;}
-      plans.push({candidateId:z.id,side:side===1?'BUY_LIMIT':'SELL_LIMIT',entry:entry,sl:stop,tp:tp,rr:rr,score:score,zone:z,setup:z.family==='PIVOT'?'PIVOT_ZONE_PULLBACK':'EBW_SD_'+z.family,createdAt:now,expiresAt:now+cfg.expiryHours*3600000});
+      funnel.score++;
+      var evidence=directionEvidence(side,z,bars,ind,h1,h4);
+      if(cfg.experimental&&evidence.regime==='COUNTER_TREND'&&!evidence.reversalConfirmed){reject('สวนเทรนด์: ยังไม่ครบ sweep/reclaim + ปิดทะลุแท่งก่อน + Stoch สนับสนุน',z);return;}
+      funnel.direction++;
+      plans.push({candidateId:z.id,side:side===1?'BUY_LIMIT':'SELL_LIMIT',entry:entry,sl:stop,tp:tp,rr:rr,score:score,zone:z,targetSource:targetSource,targetReference:obstacles[0],directionEvidence:evidence,setup:z.family==='PIVOT'?'PIVOT_ZONE_PULLBACK':'EBW_SD_'+z.family,createdAt:now,expiresAt:now+cfg.expiryHours*3600000});
     });
     plans.sort(function(a,b){return b.score-a.score||b.rr-a.rr;});
     var selected=plans.slice(0,6);
-    return {indicators:ind,h1:h1,h4:h4,zones:zs,candidates:selected,coverage:{m15:bars.length,h1:hour.length,h4:four.length},candidateAudit:{zonesFound:zs.length,candidatesBeforeLimit:plans.length,candidatesReturned:selected.length,rejectedCounts:rejectedCounts,rejectedSamples:rejectedSamples}};
+    funnel.selected=selected.length;
+    return {indicators:ind,h1:h1,h4:h4,zones:zs,candidates:selected,coverage:{m15:bars.length,h1:hour.length,h4:four.length},candidateAudit:{zonesFound:zs.length,candidatesBeforeLimit:plans.length,candidatesReturned:selected.length,funnel:funnel,rejectedCounts:rejectedCounts,rejectedSamples:rejectedSamples}};
   }
   function validatePlan(p,quote,cfg) {
     if(!p||![p.entry,p.sl,p.tp,p.expiresAt].every(number))fail('แผนมีตัวเลขไม่ครบ');
@@ -198,5 +232,5 @@ var NitiCore = (function () {
     var groups={};resolved.forEach(function(p){var key=p.symbol+' | '+p.setup+' | '+p.session;var g=groups[key]||(groups[key]={key:key,n:0,wins:0,r:0});g.n++;g.wins+=p.resultR>0?1:0;g.r+=Number(p.resultR);});
     return {total:plans.length,resolved:resolved.length,wins:wins,losses:resolved.length-wins,winRate:resolved.length?wins/resolved.length:null,netR:net,avgR:resolved.length?net/resolved.length:null,maxDrawdownR:dd,profitFactor:loss?gain/loss:null,ambiguous:plans.filter(function(p){return p.status==='AMBIGUOUS';}).length,filled:plans.filter(function(p){return !!p.filledAt;}).length,groups:Object.keys(groups).map(function(k){return groups[k];})};
   }
-  return {timestamp:timestamp,thai:thai,normalize:normalize,aggregate:aggregate,indicators:indicators,zones:zones,candidates:candidates,validatePlan:validatePlan,paper:paper,stats:stats,number:number};
+  return {timestamp:timestamp,thai:thai,normalize:normalize,aggregate:aggregate,indicators:indicators,zones:zones,confirmedSwings:confirmedSwings,candidates:candidates,validatePlan:validatePlan,paper:paper,stats:stats,number:number};
 })();

@@ -62,10 +62,45 @@
       return;
     }
     var counts = audit.rejectedCounts || {};
-    var reasons = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, 4);
+    var reasons = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+    var labels = {zones:'พบโซน',entry:'ผ่านระยะเข้า',risk:'ผ่าน SL',target:'มีเป้า TP',rr:'ผ่าน R:R',score:'ผ่านคะแนน',direction:'ผ่านทิศทาง',selected:'ส่งคัดเลือก'};
+    function funnel(value) {
+      if (!value || !value.funnel) return '';
+      return '<ol class="niti-funnel">' + Object.keys(labels).map(function (key) {
+        return '<li><span>' + labels[key] + '</span><b>' + esc(value.funnel[key]) + '</b></li>';
+      }).join('') + '</ol>';
+    }
+    var outcome = context.outcome;
+    var result = outcome ? '<p>ผลรอบนี้: <b>' + esc(outcome.status) + '</b> · ' + esc(outcome.reason) + '<br>AI: ' + (outcome.aiDecision ? esc(outcome.aiDecision) : outcome.aiCalled ? 'เรียกแล้ว' : 'ไม่ได้เลือกแผน') + '</p>' : '';
     card.innerHTML = '<span class="gold">รายละเอียดการคัดโซน</span><br>' +
       '<span>พบโซน ' + esc(audit.zonesFound || 0) + ' · เหลือ Candidate ' + esc(audit.candidatesReturned || 0) + '</span>' +
-      (reasons.length ? '<br><small>ตัดออก: ' + reasons.map(function (reason) { return esc(reason) + ' (' + esc(counts[reason]) + ')'; }).join(' · ') + '</small>' : '');
+      funnel(audit) + result +
+      (reasons.length ? '<details><summary>เหตุผลที่ตัดออกทั้งหมด</summary><ul>' + reasons.map(function (reason) { return '<li>' + esc(reason) + ' (' + esc(counts[reason]) + ')</li>'; }).join('') + '</ul><p>นับเหตุผลแรกที่แต่ละโซนไม่ผ่าน</p></details>' : '');
+    var comparison = context.comparison;
+    if (comparison) {
+      var trial = dashboard && dashboard.trials;
+      var stats = trial && trial.symbols && trial.symbols[context.symbol];
+      var revisedReasons = comparison.revised.rejectedCounts || {};
+      var body = '<details class="niti-trial" open><summary>ทดลอง Balanced ใหม่ · ยังไม่แทนระบบหลัก</summary>' +
+        '<p>ข้อมูลราคาเดียวกัน · Score และ R:R เท่ากัน · ทั้งสองฝั่งทดลองเลือกอันดับ 1 โดยไม่ใช้ AI และไม่แจ้งเป็นออเดอร์</p>' +
+        '<p>เดิมผ่าน ' + esc(comparison.baseline.candidatesBeforeLimit) + ' โซน · ใหม่ผ่าน ' + esc(comparison.revised.candidatesBeforeLimit) + ' โซน</p>' + funnel(comparison.revised) +
+        '<p>กติกาใหม่: สวนเทรนด์ H1/H4 ต้องยืนยันกลับตัว; ใช้ Swing ยืนยันแล้วเป็นเป้าสำรองเมื่อไม่มีโซนตรงข้าม</p>' +
+        '<p>' + esc(comparison.tracking && comparison.tracking.reason || 'ยังไม่ได้เริ่มติดตาม') + '</p>';
+      if (Object.keys(revisedReasons).length) body += '<details><summary>เหตุผลของกติกาใหม่</summary><ul>' + Object.keys(revisedReasons).map(function (r) { return '<li>' + esc(r) + ' (' + esc(revisedReasons[r]) + ')</li>'; }).join('') + '</ul></details>';
+      if (stats) {
+        body += '<div class="niti-table"><table><caption>ผล Paper ทดลองสะสมของ ' + esc(context.symbol) + '</caption><thead><tr><th>กติกา</th><th>แผน</th><th>ปิดแล้ว</th><th>ชนะ / แพ้</th><th>R รวม</th><th>กำกวม</th></tr></thead><tbody>' +
+          [['เดิม',stats.baseline],['ใหม่',stats.revised]].map(function (pair) { var s=pair[1];return '<tr><th>' + pair[0] + '</th><td>' + esc(s.total) + '</td><td>' + esc(s.resolved) + '</td><td>' + esc(s.wins) + ' / ' + esc(s.losses) + '</td><td>' + fmt(s.netR,2) + '</td><td>' + esc(s.ambiguous) + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+          '<p>คู่ที่ปิดครบทั้งสองฝั่ง ' + esc(stats.pairedResolved) + ' · ผ่านเฉพาะเดิม ' + esc(stats.baselineOnly) + ' · ผ่านเฉพาะใหม่ ' + esc(stats.revisedOnly) + '</p>' +
+          '<p>แยกจากสถิติหลัก; ผลยังไม่ใช่ข้อสรุปว่ากติกาไหนดีกว่า เพราะจำนวนแผนและแผนที่ยังไม่จบอาจต่างกัน</p>';
+      }
+      var candidates = comparison.revisedCandidates || [];
+      if (candidates.length) body += '<details><summary>ดูแผนที่ผ่านกติกาทดลอง (' + candidates.length + ')</summary><ul>' + candidates.map(function (p) {
+        var d=symbolsWithFiveDecimals[context.symbol]?5:2;
+        return '<li>' + esc(p.side) + ' · Entry ' + fmt(p.entry,d) + ' · SL ' + fmt(p.sl,d) + ' · TP ' + fmt(p.tp,d) + ' · R:R ' + fmt(p.rr,2) + ' · ' + (p.targetSource==='CONFIRMED_SWING'?'เป้าจาก Swing':'เป้าจากโซน') + '</li>';
+      }).join('') + '</ul></details>';
+      card.innerHTML += body + '</details>';
+    }
+    if (context.trialError || dashboard && dashboard.trials && dashboard.trials.error) card.innerHTML += '<p role="status">ส่วนทดลองมีปัญหา: ' + esc(context.trialError || dashboard.trials.error) + '</p>';
   }
 
   function drawContextChart(context, plan) {
@@ -115,8 +150,9 @@
   }
 
   function renderContext() {
+    if (typeof demo !== 'undefined' && demo) { var trialCard=document.getElementById('candidateAudit');if(trialCard)trialCard.remove();return; }
     var symbol = selectedSymbol(), context = contextFor(symbol);
-    if (!context) return;
+    if (!context) { renderAudit(null);return; }
     var indicator = context.indicators || {}, indicatorHost = document.getElementById('indicators');
     if (indicatorHost) {
       var readings = [['RSI (14)', fmt(indicator.rsi, 1)], ['Stoch K / D', fmt(indicator.k, 0) + ' / ' + fmt(indicator.d, 0)], ['ATR (14)', fmt(indicator.atr, symbolsWithFiveDecimals[symbol] ? 5 : 2)], ['M15 TREND', indicator.trend || '—'], ['H1 TREND', context.h1 && context.h1.trend || 'ข้อมูลไม่พอ'], ['H4 TREND', context.h4 && context.h4.trend || 'ข้อมูลไม่พอ']];
@@ -152,6 +188,9 @@
   };
 
   function start() {
+    var style=document.createElement('style');
+    style.textContent='.niti-funnel{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;padding:0;list-style:none;margin:14px 0}.niti-funnel li{background:#12242b;border:1px solid #29404b;border-radius:8px;padding:10px;display:flex;flex-direction:column;font-size:14px}.niti-funnel b{font-size:20px;color:#dfbf76}.niti-trial{margin-top:18px;border-top:1px solid #29404b;padding-top:14px}.niti-trial summary{cursor:pointer;color:#dfbf76;font-size:16px}.niti-trial p,#candidateAudit p{font-size:14px;line-height:1.7}.niti-table{overflow-x:auto}.niti-table table{width:100%;font-size:14px;border-collapse:collapse}.niti-table th,.niti-table td{padding:8px;text-align:left;border-bottom:1px solid #29404b}.niti-table caption{text-align:left;padding:8px 0}#candidateAudit details li{font-size:14px;line-height:1.8}';
+    document.head.appendChild(style);
     document.addEventListener('click', function () { window.setTimeout(renderContext, 0); }, true);
     window.addEventListener('resize', renderContext);
     readDashboard();
