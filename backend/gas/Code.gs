@@ -1,6 +1,6 @@
 /* NITI TRADER — CONFIGURATION / ตั้งค่าที่นี่ก่อน */
 const NITI = {
-  NAME: 'Niti Trader', VERSION: '1.6.4', ENGINE: 'Niti Structure v1 · Balanced',
+  NAME: 'Niti Trader', VERSION: '1.6.5', ENGINE: 'Niti Structure v1 · Balanced',
   SHEET_ID: '1tqWZGrETUTIuzu-MbZsipGFGeGKMkq1P6Q4Oz6biqpk',
   TIMEZONE: 'Asia/Bangkok',
   // Recommended: Project Settings > Script Properties. Never put keys in HTML.
@@ -180,11 +180,39 @@ function aiJson_(content){
 }
 function parseAiDecision_(result,context,runId){
   const choice=result&&Array.isArray(result.choices)?result.choices[0]:null,finish=choice&&choice.finish_reason||'';
-  if(!choice||!choice.message)throw new Error('AI ไม่ส่งข้อความกลับมา'+(finish?' ('+finish+')':''));
-  let d;try{d=aiJson_(aiText_(choice.message.content));}catch(e){health_('AI_RESPONSE_ERROR','run '+runId+' · generation '+(result.id||'')+' · finish '+(finish||'unknown')+' · '+e.message);throw new Error('AI ส่ง JSON ไม่สมบูรณ์'+(finish==='length'?' เพราะคำตอบยาวเกินขีดจำกัด':'')+' บันทึกค่าใช้จ่ายแล้ว');}
-  if(!d||['SELECT','WAIT'].indexOf(d.decision)<0||typeof d.reason!=='string'||!d.reason.trim()||!Array.isArray(d.risks))throw new Error('AI schema ไม่ผ่าน บันทึกค่าใช้จ่ายแล้ว');
-  if(d.decision==='SELECT'&&!context.candidates.some(p=>p.candidateId===d.candidateId))throw new Error('AI เลือกรหัสแผนที่ไม่มีในข้อมูล บันทึกค่าใช้จ่ายแล้ว');
-  return d;
+  let d;const normalized=[];
+  const kind=v=>v===null?'null':Array.isArray(v)?'array':typeof v;
+  // Log field types, not raw model content (which may contain untrusted text).
+  function reject(message){
+    health_('AI_RESPONSE_ERROR',JSON.stringify({run:runId,generation:result&&result.id||'',finish:finish||'unknown',issue:message,shape:d&&typeof d==='object'?{root:kind(d),decision:kind(d.decision),reason:kind(d.reason),risks:kind(d.risks),candidateId:kind(d.candidateId)}:{root:kind(d)}}));
+    throw new Error('คำตอบ AI ไม่ผ่านการตรวจ: '+message+' · ไม่สร้างแผน · บันทึกค่าใช้จ่ายแล้ว');
+  }
+  if(!choice||!choice.message)reject('ไม่มีข้อความตอบกลับ');
+  if(finish==='length')reject('คำตอบถูกตัดเพราะถึงขีดจำกัดความยาว');
+  if(choice.message.refusal||finish==='content_filter')reject('ผู้ให้บริการปฏิเสธคำตอบ');
+  if(finish&&finish!=='stop')reject('คำตอบยังไม่จบตามปกติ');
+  try{d=aiJson_(aiText_(choice.message.content));}catch(e){reject('อ่าน JSON ไม่ได้หรือข้อมูลไม่ครบ');}
+  if(!d||typeof d!=='object'||Array.isArray(d))reject('คำตอบต้องเป็นวัตถุ JSON');
+  if(typeof d.decision==='string'){
+    const decision=d.decision.trim().toUpperCase();
+    if(decision!==d.decision)normalized.push('decision whitespace/case');
+    d.decision=decision;
+  }
+  if(['SELECT','WAIT'].indexOf(d.decision)<0)reject('decision ต้องเป็น SELECT หรือ WAIT');
+  if(typeof d.reason!=='string'||!d.reason.trim())reject('reason ต้องมีเหตุผลเป็นข้อความ');
+  // A nonempty risk string carries the same information as a one-item list.
+  // Missing/null risks are never invented or silently treated as no risk.
+  if(typeof d.risks==='string'&&d.risks.trim()){d.risks=[d.risks.trim()];normalized.push('risks string to list');}
+  if(!Array.isArray(d.risks)||d.risks.some(r=>typeof r!=='string'||!r.trim()))reject('risks ต้องเป็นรายการข้อความ (ไม่มีความเสี่ยงให้ส่ง [])');
+  if(d.decision==='SELECT'){
+    if(typeof d.candidateId!=='string')reject('SELECT ต้องมี candidateId เป็นข้อความ');
+    const candidateId=d.candidateId.trim();
+    if(candidateId!==d.candidateId)normalized.push('candidateId whitespace');
+    d.candidateId=candidateId;
+    if(!context.candidates.some(p=>p.candidateId===d.candidateId))reject('candidateId ไม่ตรงกับแผนที่ส่งให้ AI');
+  }else if(d.candidateId!==null&&d.candidateId!==undefined)reject('WAIT ต้องไม่ระบุ candidateId');
+  if(normalized.length)health_('AI_RESPONSE_NORMALIZED',JSON.stringify({run:runId,generation:result.id||'',changes:normalized}));
+  return {decision:d.decision,candidateId:d.decision==='SELECT'?d.candidateId:null,reason:d.reason.trim(),risks:d.risks.map(r=>r.trim())};
 }
 function ai_(context,c,runId){
   if(!c.OPENROUTER_API_KEY)throw new Error('ยังไม่มี OPENROUTER_API_KEY');
