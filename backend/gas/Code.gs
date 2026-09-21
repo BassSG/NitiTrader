@@ -1,6 +1,6 @@
 /* NITI TRADER — CONFIGURATION / ตั้งค่าที่นี่ก่อน */
 const NITI = {
-  NAME: 'Niti Trader', VERSION: '1.6.0', ENGINE: 'Niti Structure v1 · Balanced',
+  NAME: 'Niti Trader', VERSION: '1.6.1', ENGINE: 'Niti Structure v1 · Balanced',
   SHEET_ID: '1tqWZGrETUTIuzu-MbZsipGFGeGKMkq1P6Q4Oz6biqpk',
   TIMEZONE: 'Asia/Bangkok',
   // Recommended: Project Settings > Script Properties. Never put keys in HTML.
@@ -22,12 +22,14 @@ const NITI = {
   SUMMARY_EMAIL: 'bass1135@gmail.com',
   AUTO_DEFAULT: false, MONITOR_MINUTES: 5,
   SYMBOLS: {
-    XAUUSD: {fmp:'XAUUSD',tick:0.01,spread:0.40,slippage:0.10,label:'Gold / US Dollar'},
+    // FMP historical-chart date strings are New York wall time for these instruments.
+    // Keep this explicit per symbol so a legacy EST_FIXED setting cannot break DST.
+    XAUUSD: {fmp:'XAUUSD',tick:0.01,spread:0.40,slippage:0.10,label:'Gold / US Dollar',sourceTimezone:'America/New_York'},
     // FMP BTCUSD historical-chart date fields align with New York wall time;
     // use the DST-aware zone instead of the global EST_FIXED setting.
     BTCUSD: {fmp:'BTCUSD',tick:0.01,spread:20,slippage:5,label:'Bitcoin / US Dollar',sourceTimezone:'America/New_York'},
-    EURUSD: {fmp:'EURUSD',tick:0.00001,spread:0.00012,slippage:0.00003,label:'Euro / US Dollar'},
-    AUDUSD: {fmp:'AUDUSD',tick:0.00001,spread:0.00015,slippage:0.00003,label:'Australian Dollar / US Dollar'}
+    EURUSD: {fmp:'EURUSD',tick:0.00001,spread:0.00012,slippage:0.00003,label:'Euro / US Dollar',sourceTimezone:'America/New_York'},
+    AUDUSD: {fmp:'AUDUSD',tick:0.00001,spread:0.00015,slippage:0.00003,label:'Australian Dollar / US Dollar',sourceTimezone:'America/New_York'}
   }
 };
 
@@ -35,6 +37,9 @@ function props_(){return PropertiesService.getScriptProperties();}
 function cfg_(){
   const p=props_().getProperties(), c=JSON.parse(JSON.stringify(NITI));
   ['FMP_API_KEY','OPENROUTER_API_KEY','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID','MODEL','FMP_TIMEZONE'].forEach(k=>{if(p[k])c[k]=p[k];});
+  // EST_FIXED was used before the DST-aware source mapping was added. Treat it as
+  // a legacy alias so September/Daylight-Saving data is never shifted by one hour.
+  if(c.FMP_TIMEZONE==='EST_FIXED')c.FMP_TIMEZONE='America/New_York';
   c.FMP_TIMEZONE_CONFIRMED=p.FMP_TIMEZONE_CONFIRMED==='true'||c.FMP_TIMEZONE_CONFIRMED;
   c.AUTO=p.AUTO_ENABLED==='true'; c.AUTO_SYMBOLS=(p.AUTO_SYMBOLS||'XAUUSD').split(',').filter(s=>c.SYMBOLS[s]);
   ['MIN_RR','MIN_SCORE','EXPIRY_HOURS','MAX_DAILY_AI_USD'].forEach(k=>{if(NitiCore.number(p[k]))c[k]=Number(p[k]);});
@@ -104,7 +109,8 @@ function fetchJson_(url,options,label){
 }
 function fmp_(endpoint,params,c){if(!c.FMP_API_KEY)throw new Error('ยังไม่มี FMP_API_KEY ใน Script Properties');const q=Object.keys(params||{}).map(k=>encodeURIComponent(k)+'='+encodeURIComponent(params[k])).concat('apikey='+encodeURIComponent(c.FMP_API_KEY)).join('&');return fetchJson_(c.FMP_BASE+'/'+endpoint+'?'+q,null,'FMP '+endpoint);}
 function sourceTimezone_(symbol,c){const sc=c.SYMBOLS[symbol];return sc&&sc.sourceTimezone?sc.sourceTimezone:c.FMP_TIMEZONE;}
-function timezonesReady_(symbols,c){return (symbols||[]).every(s=>{const z=sourceTimezone_(s,c);return z==='UTC'||c.FMP_TIMEZONE_CONFIRMED;});}
+function timezoneConfirmed_(symbol,c){const sc=c.SYMBOLS[symbol],z=sourceTimezone_(symbol,c);return z==='UTC'||c.FMP_TIMEZONE_CONFIRMED||!!(sc&&sc.sourceTimezone);}
+function timezonesReady_(symbols,c){return (symbols||[]).every(s=>timezoneConfirmed_(s,c));}
 function market_(symbol,c,now,withHigherTimeframe){
   const sc=c.SYMBOLS[symbol];if(!sc)throw new Error('Symbol ไม่รองรับ');
   const quotes=fmp_('quote',{symbol:sc.fmp},c),q=Array.isArray(quotes)?quotes[0]:null;
@@ -122,7 +128,7 @@ function market_(symbol,c,now,withHigherTimeframe){
     h4=NitiCore.aggregate(higher.bars.slice(-5000),4,3600000);calls++;higherLatest=higher.latest;
     if(h4.length<60)throw new Error('ข้อมูล H4 จาก FMP ยังไม่ครบ 60 แท่ง (ได้ '+h4.length+')');
   }
-  return {symbol:symbol,price:Number(q.price),quoteAt:qt,quoteName:q.name||sc.fmp,bars5:bars,bars15:m15,barsH4:h4,h4Source:withHigherTimeframe?'FMP 1H → H4':'ไม่ได้ดึงในรอบติดตาม',higherLatest:higherLatest,naiveTime:normalized.naive,timezoneConfirmed:!normalized.naive||sourceTimezone==='UTC'||c.FMP_TIMEZONE_CONFIRMED,latestRaw:raw.length?(raw[0].date||raw[0].timestamp):null,latestParsed:normalized.latest,sourceTimezone:sourceTimezone,calls:calls};
+  return {symbol:symbol,price:Number(q.price),quoteAt:qt,quoteName:q.name||sc.fmp,bars5:bars,bars15:m15,barsH4:h4,h4Source:withHigherTimeframe?'FMP 1H → H4':'ไม่ได้ดึงในรอบติดตาม',higherLatest:higherLatest,naiveTime:normalized.naive,timezoneConfirmed:!normalized.naive||timezoneConfirmed_(symbol,c),latestRaw:raw.length?(raw[0].date||raw[0].timestamp):null,latestParsed:normalized.latest,sourceTimezone:sourceTimezone,calls:calls};
 }
 function quality_(m,c,now,allowPlanning){
   if(m.naiveTime&&!m.timezoneConfirmed)throw new Error('ตรวจและยืนยัน timezone ของ FMP ในหน้า ตั้งค่า ก่อนออกแผน');
@@ -309,7 +315,7 @@ function saveSettings(input){
   owner_();const p=props_(),pending={};
   const ranges={MIN_RR:[1,5],MIN_SCORE:[45,90],EXPIRY_HOURS:[1,24],MAX_DAILY_AI_USD:[0.1,20]};
   Object.keys(ranges).forEach(k=>{if(input[k]!==undefined){const v=Number(input[k]);if(!Number.isFinite(v)||v<ranges[k][0]||v>ranges[k][1])throw new Error(k+' อยู่นอกช่วง');pending[k]=String(v);}});
-  if(input.FMP_TIMEZONE!==undefined){if(['UTC','America/New_York','EST_FIXED'].indexOf(input.FMP_TIMEZONE)<0)throw new Error('Timezone ไม่รองรับ');if(plans_().some(x=>['PENDING','FILLED'].indexOf(x.status)>=0)&&input.FMP_TIMEZONE!==cfg_().FMP_TIMEZONE)throw new Error('มีแผนทำงานอยู่ เปลี่ยน timezone ไม่ได้');pending.FMP_TIMEZONE=input.FMP_TIMEZONE;}
+  if(input.FMP_TIMEZONE!==undefined){const requestedTimezone=input.FMP_TIMEZONE==='EST_FIXED'?'America/New_York':input.FMP_TIMEZONE;if(['UTC','America/New_York'].indexOf(requestedTimezone)<0)throw new Error('Timezone ไม่รองรับ');if(plans_().some(x=>['PENDING','FILLED'].indexOf(x.status)>=0)&&requestedTimezone!==cfg_().FMP_TIMEZONE)throw new Error('มีแผนทำงานอยู่ เปลี่ยน timezone ไม่ได้');pending.FMP_TIMEZONE=requestedTimezone;}
   if(typeof input.FMP_TIMEZONE_CONFIRMED==='boolean')pending.FMP_TIMEZONE_CONFIRMED=String(input.FMP_TIMEZONE_CONFIRMED);
   if(Array.isArray(input.AUTO_SYMBOLS)){const s=input.AUTO_SYMBOLS.filter(x=>NITI.SYMBOLS[x]);if(!s.length)throw new Error('เลือกอย่างน้อย 1 symbol');pending.AUTO_SYMBOLS=s.join(',');}
   if(input.TELEGRAM_BOT_TOKEN!==undefined){const token=String(input.TELEGRAM_BOT_TOKEN||'').trim();if(token&&(!/^\d+:[A-Za-z0-9_-]{20,}$/.test(token)))throw new Error('Telegram Bot Token รูปแบบไม่ถูกต้อง');pending.TELEGRAM_BOT_TOKEN=token;}
@@ -322,7 +328,8 @@ function getDashboard(){
   owner_();const c=cfg_(),plans=plans_(),runRows=rows_('NT_Runs',100),runs=runRows.slice().reverse().map(r=>({id:r[0],time:r[1] instanceof Date?r[1].getTime():null,symbol:r[2],price:NitiCore.number(r[3])?Number(r[3]):null,status:r[4],reason:r[5],cost:NitiCore.number(r[6])?Number(r[6]):null,costStatus:r[7],model:r[10],quoteAt:r[12] instanceof Date?r[12].getTime():null}));
   const contexts={};let context=null;runRows.slice().reverse().forEach(r=>{if(!r[16])return;try{const parsed=JSON.parse(r[16]);if(!context)context=parsed;if(parsed.symbol&&!contexts[parsed.symbol])contexts[parsed.symbol]=parsed;}catch(e){}});
   let trials;try{trials=trialDashboard_();}catch(e){trials={error:String(e.message||e)};}
-  return {name:NITI.NAME,version:NITI.VERSION,engine:NITI.ENGINE,timezone:NITI.TIMEZONE,now:Date.now(),auto:c.AUTO,lastRun:Number(props_().getProperty('LAST_RUN'))||null,ready:{fmp:!!c.FMP_API_KEY,ai:!!c.OPENROUTER_API_KEY,telegram:!!(c.TELEGRAM_BOT_TOKEN&&c.TELEGRAM_CHAT_ID),timezone:c.FMP_TIMEZONE_CONFIRMED},settings:{PROFILE:'BALANCED',MIN_RR:c.MIN_RR,MIN_SCORE:c.MIN_SCORE,EXPIRY_HOURS:c.EXPIRY_HOURS,MAX_DAILY_AI_USD:c.MAX_DAILY_AI_USD,FMP_TIMEZONE:c.FMP_TIMEZONE,FMP_TIMEZONE_CONFIRMED:c.FMP_TIMEZONE_CONFIRMED,AUTO_SYMBOLS:c.AUTO_SYMBOLS,symbols:c.SYMBOLS},plans:plans.slice(-500).reverse(),stats:NitiCore.stats(plans),trials:trials,runs:runs,context:context,contexts:contexts,sheetUrl:'https://docs.google.com/spreadsheets/d/'+NITI.SHEET_ID+'/edit',health:rows_('NT_Health',15).reverse().map(r=>({time:r[0] instanceof Date?r[0].getTime():null,topic:r[1],detail:r[2]}))};
+  const timezoneReady=timezonesReady_(c.AUTO_SYMBOLS,c);
+  return {name:NITI.NAME,version:NITI.VERSION,engine:NITI.ENGINE,timezone:NITI.TIMEZONE,now:Date.now(),auto:c.AUTO,lastRun:Number(props_().getProperty('LAST_RUN'))||null,ready:{fmp:!!c.FMP_API_KEY,ai:!!c.OPENROUTER_API_KEY,telegram:!!(c.TELEGRAM_BOT_TOKEN&&c.TELEGRAM_CHAT_ID),timezone:timezoneReady},settings:{PROFILE:'BALANCED',MIN_RR:c.MIN_RR,MIN_SCORE:c.MIN_SCORE,EXPIRY_HOURS:c.EXPIRY_HOURS,MAX_DAILY_AI_USD:c.MAX_DAILY_AI_USD,FMP_TIMEZONE:c.FMP_TIMEZONE,FMP_TIMEZONE_CONFIRMED:timezoneReady,AUTO_SYMBOLS:c.AUTO_SYMBOLS,symbols:c.SYMBOLS},plans:plans.slice(-500).reverse(),stats:NitiCore.stats(plans),trials:trials,runs:runs,context:context,contexts:contexts,sheetUrl:'https://docs.google.com/spreadsheets/d/'+NITI.SHEET_ID+'/edit',health:rows_('NT_Health',15).reverse().map(r=>({time:r[0] instanceof Date?r[0].getTime():null,topic:r[1],detail:r[2]}))};
 }
 function diagnostics(symbol){
   owner_();const c=cfg_(),now=Date.now(),out={time:now,symbol:symbol||'XAUUSD',checks:[],cost:0,costStatus:'NOT_CALLED'};

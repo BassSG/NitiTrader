@@ -11,6 +11,7 @@ const core = context.NitiCore;
 assert.ok(core, 'NitiCore must be available');
 
 assert.equal(core.thai(Date.UTC(2026, 8, 19, 18)), '2026-09-20 01:00:00');
+assert.equal(core.timestamp('2026-09-20 21:45:00', 'America/New_York'), Date.UTC(2026, 8, 21, 1, 45), 'DST-aware New York wall time must map to UTC−4 in September');
 
 assert.throws(
   () => core.normalize([{ timestamp: (Date.UTC(2026, 8, 19, 12) + 600000) / 1000, open: 1, high: 2, low: 1, close: 2 }], 'UTC', 300000, Date.UTC(2026, 8, 19, 12)),
