@@ -1,6 +1,6 @@
 /* NITI TRADER — CONFIGURATION / ตั้งค่าที่นี่ก่อน */
 const NITI = {
-  NAME: 'Niti Trader', VERSION: '1.6.2', ENGINE: 'Niti Structure v1 · Balanced',
+  NAME: 'Niti Trader', VERSION: '1.6.3', ENGINE: 'Niti Structure v1 · Balanced',
   SHEET_ID: '1tqWZGrETUTIuzu-MbZsipGFGeGKMkq1P6Q4Oz6biqpk',
   TIMEZONE: 'Asia/Bangkok',
   // Recommended: Project Settings > Script Properties. Never put keys in HTML.
@@ -113,14 +113,14 @@ function timezoneConfirmed_(symbol,c){const sc=c.SYMBOLS[symbol],z=sourceTimezon
 function timezonesReady_(symbols,c){return (symbols||[]).every(s=>timezoneConfirmed_(s,c));}
 function normalizeFmp_(rows,preferredZone,intervalMs,now,quoteAt){
   const zones=[preferredZone,'America/New_York','UTC','EST_FIXED'].filter((z,i,a)=>z&&a.indexOf(z)===i);
-  let best=null,lastError=null;
+  let best=null,lastError=null,errors=[];
   zones.forEach(z=>{try{
     const normalized=NitiCore.normalize(rows,z,intervalMs,now);
     const delta=NitiCore.number(quoteAt)&&NitiCore.number(normalized.latest)?Math.abs(Number(quoteAt)-Number(normalized.latest)):0;
     const score=delta+(normalized.latest>now+intervalMs?1e15:0);
     if(!best||score<best.score)best={normalized:normalized,zone:z,score:score};
-  }catch(e){lastError=e;}});
-  if(!best)throw lastError||new Error('FMP เวลาแท่งไม่สอดคล้องกับ quote สด');
+  }catch(e){lastError=e;errors.push(z+': '+String(e.message||e));}});
+  if(!best)throw new Error('FMP เวลาแท่งไม่สอดคล้องกับ quote สด · raw '+String(rows&&rows.length?(rows[0].date||rows[0].timestamp):'ไม่มี')+' · quote '+NitiCore.thai(quoteAt)+' · now '+NitiCore.thai(now)+' · '+errors.join(' | '));
   return best;
 }
 function market_(symbol,c,now,withHigherTimeframe){
