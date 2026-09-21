@@ -46,6 +46,56 @@
     return new Intl.DateTimeFormat('th-TH-u-ca-gregory', { timeZone: 'Asia/Bangkok', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
   }
 
+  function analysisTone(result) {
+    var status = String(result && result.status || '').toUpperCase();
+    if ((status === 'PLAN' || status === 'PLAN_CLOSED') && result && result.plan) return 'success';
+    if (status === 'WAIT' || status === 'EXISTING_PLAN' || status === 'MARKET_CLOSED') return 'wait';
+    return 'error';
+  }
+
+  function resultLevel(label, value, digits, className) {
+    return '<div class="niti-result-level ' + (className || '') + '"><span>' + esc(label) + '</span><b>' + esc(fmt(value, digits)) + '</b></div>';
+  }
+
+  function showAnalysisResult(result, usdFormatter) {
+    var dialog = document.getElementById('resultDialog');
+    var title = document.getElementById('resultTitle');
+    var message = document.getElementById('resultMessage');
+    if (!dialog || !title || !message) return;
+    var tone = analysisTone(result), plan = result && result.plan, symbol = result && result.symbol || selectedSymbol();
+    var digits = symbolsWithFiveDecimals[symbol] ? 5 : 2;
+    var cost = typeof usdFormatter === 'function' ? usdFormatter(result) : 'ไม่ทราบค่าใช้จ่าย';
+    var reason = esc(result && result.reason || 'ไม่มีรายละเอียดจากระบบ');
+    var signal = document.getElementById('nitiResultSignal');
+    if (!signal) {
+      signal = document.createElement('div');
+      signal.id = 'nitiResultSignal';
+      dialog.insertBefore(signal, title);
+    }
+    dialog.className = 'niti-result-dialog niti-' + tone;
+    signal.className = 'niti-result-signal';
+    if (tone === 'success') {
+      signal.innerHTML = '<span class="niti-result-icon">✓</span><span><b>LIMIT SETUP READY</b><small>เงื่อนไขผ่าน · พร้อมติดตามแบบ Paper</small></span>';
+      title.textContent = result.status === 'PLAN_CLOSED' ? 'ผ่าน — วางแผนรอเปิดตลาด' : 'ผ่าน — พบแผนที่เข้าได้';
+      message.innerHTML = '<div class="niti-result-symbol">' + esc(symbol) + ' · ' + esc(plan.side === 'BUY_LIMIT' ? 'BUY LIMIT' : 'SELL LIMIT') + '</div><div class="niti-result-levels">' +
+        resultLevel('ENTRY', plan.entry, digits, 'entry') + resultLevel('TAKE PROFIT', plan.tp, digits, 'tp') + resultLevel('STOP LOSS', plan.sl, digits, 'sl') +
+        '</div><p class="niti-result-reason">' + reason + '</p><div class="niti-result-cost">ค่า AI รอบนี้ <b>' + esc(cost) + '</b></div>';
+    } else if (tone === 'wait') {
+      signal.innerHTML = '<span class="niti-result-icon">⌁</span><span><b>NO TRADE YET</b><small>ระบบยังไม่อนุมัติการเข้าออเดอร์</small></span>';
+      title.textContent = 'ยังไม่ผ่าน — รอจังหวะที่ชัดเจน';
+      message.innerHTML = '<div class="niti-result-symbol">' + esc(symbol) + ' · WAIT</div><p class="niti-result-reason">' + reason + '</p><div class="niti-result-cost">ค่า AI รอบนี้ <b>' + esc(cost) + '</b></div>';
+    } else {
+      signal.innerHTML = '<span class="niti-result-icon">!</span><span><b>CHECK REQUIRED</b><small>ระบบยังออกผลเทรดไม่ได้</small></span>';
+      title.textContent = 'ไม่ผ่าน — ต้องตรวจสอบก่อน';
+      message.innerHTML = '<div class="niti-result-symbol">' + esc(symbol) + ' · ERROR</div><p class="niti-result-reason">' + reason + '</p><div class="niti-result-cost">ค่า AI รอบนี้ <b>' + esc(cost) + '</b></div>';
+    }
+    var close = document.getElementById('closeResult');
+    if (close) close.textContent = tone === 'success' ? 'ดูแผนบนหน้าจอ' : 'รับทราบ';
+    if (!dialog.open) dialog.showModal();
+  }
+
+  window.nitiShowAnalysisResult = showAnalysisResult;
+
   function renderAudit(context) {
     var active = document.getElementById('activePlan');
     if (!active) return;
@@ -192,6 +242,9 @@
     var style=document.createElement('style');
     style.textContent='.niti-funnel{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;padding:0;list-style:none;margin:14px 0}.niti-funnel li{background:#12242b;border:1px solid #29404b;border-radius:8px;padding:10px;display:flex;flex-direction:column;font-size:14px}.niti-funnel b{font-size:20px;color:#dfbf76}.niti-trial{margin-top:18px;border-top:1px solid #29404b;padding-top:14px}.niti-trial summary{cursor:pointer;color:#dfbf76;font-size:16px}.niti-trial p,#candidateAudit p{font-size:14px;line-height:1.7}.niti-table{overflow-x:auto}.niti-table table{width:100%;font-size:14px;border-collapse:collapse}.niti-table th,.niti-table td{padding:8px;text-align:left;border-bottom:1px solid #29404b}.niti-table caption{text-align:left;padding:8px 0}#candidateAudit details li{font-size:14px;line-height:1.8}';
     document.head.appendChild(style);
+    var resultStyle=document.createElement('style');
+    resultStyle.textContent='.niti-result-dialog{width:min(520px,calc(100vw - 28px));padding:25px;border-radius:20px;background:#101d25;color:#edf3f5;box-shadow:0 24px 80px #000b}.niti-result-dialog.niti-success{border:1px solid #55cdb0;background:linear-gradient(145deg,#112a2a,#111e26 62%)}.niti-result-dialog.niti-wait{border:1px solid #c39b54;background:linear-gradient(145deg,#2b2518,#111e26 62%)}.niti-result-dialog.niti-error{border:1px solid #e07880;background:linear-gradient(145deg,#321d28,#111e26 62%)}.niti-result-dialog h2{margin:14px 0 10px;font-size:23px;letter-spacing:-.3px}.niti-result-signal{display:flex;align-items:center;gap:12px;text-transform:uppercase;letter-spacing:1.4px;font-size:11px}.niti-result-signal b{display:block}.niti-result-signal small{display:block;margin-top:3px;color:#9eb1ba;text-transform:none;letter-spacing:0;font-size:13px}.niti-success .niti-result-signal{color:#72e0c2}.niti-wait .niti-result-signal{color:#e6c57c}.niti-error .niti-result-signal{color:#ff9b9f}.niti-result-icon{width:42px;height:42px;display:grid;place-items:center;border-radius:50%;font-size:24px;font-weight:800;background:#ffffff0d;border:1px solid currentColor}.niti-result-symbol{font-size:15px;color:#e6c57c;font-weight:700;margin-bottom:12px}.niti-result-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 15px}.niti-result-level{padding:10px;border:1px solid #2a424d;border-radius:10px;background:#0b171e}.niti-result-level span{display:block;color:#9eb1ba;font-size:10px;letter-spacing:.7px}.niti-result-level b{display:block;margin-top:3px;font-size:16px}.niti-result-level.entry{border-color:#a38852}.niti-result-level.entry b{color:#e6c57c}.niti-result-level.tp b{color:#72e0c2}.niti-result-level.sl b{color:#ff9b9f}.niti-result-reason{color:#c3d0d5;font-size:14px;line-height:1.75;margin:12px 0}.niti-result-cost{padding:10px 12px;border-radius:9px;background:#0b171e;color:#91a4b1;font-size:12px}.niti-result-cost b{color:#edf3f5}.niti-result-dialog .dialog-actions{margin-top:20px}.niti-result-dialog .dialog-actions .btn{min-height:42px}@media(max-width:520px){.niti-result-dialog{padding:21px}.niti-result-levels{grid-template-columns:1fr}.niti-result-level{display:flex;justify-content:space-between;align-items:center}.niti-result-level span{font-size:11px}.niti-result-level b{margin-top:0}}';
+    document.head.appendChild(resultStyle);
     document.addEventListener('click', function () { window.setTimeout(renderContext, 0); }, true);
     window.addEventListener('resize', renderContext);
     readDashboard();
