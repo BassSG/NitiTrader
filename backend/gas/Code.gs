@@ -1,6 +1,6 @@
 /* NITI TRADER — CONFIGURATION / ตั้งค่าที่นี่ก่อน */
 const NITI = {
-  NAME: 'Niti Trader', VERSION: '1.6.3', ENGINE: 'Niti Structure v1 · Balanced',
+  NAME: 'Niti Trader', VERSION: '1.6.4', ENGINE: 'Niti Structure v1 · Balanced',
   SHEET_ID: '1tqWZGrETUTIuzu-MbZsipGFGeGKMkq1P6Q4Oz6biqpk',
   TIMEZONE: 'Asia/Bangkok',
   // Recommended: Project Settings > Script Properties. Never put keys in HTML.
@@ -305,7 +305,7 @@ function monitorPlans(){
       if(p.trialArm){saveTrial_(check.plan,false);return;}
       savePlan_(check.plan,false);
       check.events.forEach(e=>{event_(p,e.status,e.time,e.note);notify_(telegramEventMessage_(p,e,c),c);});
-    }catch(e){health_('MONITOR '+p.id,e.message);}});
+    }catch(e){health_('MONITOR '+NITI.VERSION+' '+p.id,e.message);}});
   }finally{lock.releaseLock();}
 }
 function hourlyAnalysis(){
@@ -321,7 +321,17 @@ function hourlyAnalysis(){
     }catch(e){health_('AUTO '+s,e.message);}
   });
 }
-function installNitiTriggers(){owner_();const existing=ScriptApp.getProjectTriggers();['hourlyAnalysis','monitorPlans'].forEach(name=>{if(!existing.some(t=>t.getHandlerFunction()===name)){const t=ScriptApp.newTrigger(name).timeBased();if(name==='hourlyAnalysis')t.everyHours(1).create();else t.everyMinutes(NITI.MONITOR_MINUTES).create();}});return {ok:true};}
+function installNitiTriggers(){
+  owner_();
+  const handlers=['hourlyAnalysis','monitorPlans'];
+  // Remove every copy of our handlers first. This repairs duplicate or stale
+  // time-driven triggers without touching unrelated user triggers.
+  ScriptApp.getProjectTriggers().forEach(t=>{if(handlers.indexOf(t.getHandlerFunction())>=0)ScriptApp.deleteTrigger(t);});
+  ScriptApp.newTrigger('hourlyAnalysis').timeBased().everyHours(1).create();
+  ScriptApp.newTrigger('monitorPlans').timeBased().everyMinutes(NITI.MONITOR_MINUTES).create();
+  health_('TRIGGERS','ติดตั้งใหม่จาก Niti Trader '+NITI.VERSION+' · hourlyAnalysis 1h · monitorPlans '+NITI.MONITOR_MINUTES+'m');
+  return {ok:true,version:NITI.VERSION,handlers:handlers};
+}
 function setAuto(enabled){owner_();if(typeof enabled!=='boolean')throw new Error('Invalid auto value');if(enabled){const c=cfg_();if(!c.FMP_API_KEY||!c.OPENROUTER_API_KEY)throw new Error('ตั้งค่า API keys ก่อนเปิด Auto');if(!timezonesReady_(c.AUTO_SYMBOLS,c))throw new Error('ตรวจและยืนยันเวลา FMP ก่อนเปิด Auto');installNitiTriggers();}props_().setProperty('AUTO_ENABLED',String(enabled));return {auto:enabled};}
 function cancelPlan(id){owner_();const lock=LockService.getScriptLock();lock.waitLock(5000);try{const p=plans_().find(x=>x.id===id);if(!p||p.status!=='PENDING')throw new Error('ยกเลิกได้เฉพาะแผน Pending');p.status='CANCELLED';p.closedAt=Date.now();savePlan_(p,false);event_(p,p.status,p.closedAt,'ยกเลิกโดยผู้ใช้');return {ok:true};}finally{lock.releaseLock();}}
 function saveSettings(input){
