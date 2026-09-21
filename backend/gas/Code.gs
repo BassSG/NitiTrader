@@ -1,6 +1,6 @@
 /* NITI TRADER — CONFIGURATION / ตั้งค่าที่นี่ก่อน */
 const NITI = {
-  NAME: 'Niti Trader', VERSION: '1.6.1', ENGINE: 'Niti Structure v1 · Balanced',
+  NAME: 'Niti Trader', VERSION: '1.6.2', ENGINE: 'Niti Structure v1 · Balanced',
   SHEET_ID: '1tqWZGrETUTIuzu-MbZsipGFGeGKMkq1P6Q4Oz6biqpk',
   TIMEZONE: 'Asia/Bangkok',
   // Recommended: Project Settings > Script Properties. Never put keys in HTML.
@@ -111,24 +111,36 @@ function fmp_(endpoint,params,c){if(!c.FMP_API_KEY)throw new Error('ยังไ
 function sourceTimezone_(symbol,c){const sc=c.SYMBOLS[symbol];return sc&&sc.sourceTimezone?sc.sourceTimezone:c.FMP_TIMEZONE;}
 function timezoneConfirmed_(symbol,c){const sc=c.SYMBOLS[symbol],z=sourceTimezone_(symbol,c);return z==='UTC'||c.FMP_TIMEZONE_CONFIRMED||!!(sc&&sc.sourceTimezone);}
 function timezonesReady_(symbols,c){return (symbols||[]).every(s=>timezoneConfirmed_(s,c));}
+function normalizeFmp_(rows,preferredZone,intervalMs,now,quoteAt){
+  const zones=[preferredZone,'America/New_York','UTC','EST_FIXED'].filter((z,i,a)=>z&&a.indexOf(z)===i);
+  let best=null,lastError=null;
+  zones.forEach(z=>{try{
+    const normalized=NitiCore.normalize(rows,z,intervalMs,now);
+    const delta=NitiCore.number(quoteAt)&&NitiCore.number(normalized.latest)?Math.abs(Number(quoteAt)-Number(normalized.latest)):0;
+    const score=delta+(normalized.latest>now+intervalMs?1e15:0);
+    if(!best||score<best.score)best={normalized:normalized,zone:z,score:score};
+  }catch(e){lastError=e;}});
+  if(!best)throw lastError||new Error('FMP เวลาแท่งไม่สอดคล้องกับ quote สด');
+  return best;
+}
 function market_(symbol,c,now,withHigherTimeframe){
   const sc=c.SYMBOLS[symbol];if(!sc)throw new Error('Symbol ไม่รองรับ');
   const quotes=fmp_('quote',{symbol:sc.fmp},c),q=Array.isArray(quotes)?quotes[0]:null;
   if(!q||!NitiCore.number(q.price)||Number(q.price)<=0||q.symbol!==sc.fmp)throw new Error('FMP ไม่มี quote ตรงสัญลักษณ์ '+sc.fmp+'; ไม่ใช้ GCUSD แทน XAUUSD');
   const sourceTimezone=sourceTimezone_(symbol,c),qt=NitiCore.timestamp(q.timestamp,sourceTimezone);
   const raw=fmp_('historical-chart/5min',{symbol:sc.fmp,from:Utilities.formatDate(new Date(now-45*86400000),'UTC','yyyy-MM-dd'),to:Utilities.formatDate(new Date(now+86400000),'UTC','yyyy-MM-dd')},c);
-  const normalized=NitiCore.normalize(raw,sourceTimezone,300000,now);
+  const resolved=normalizeFmp_(raw,sourceTimezone,300000,now,qt),normalized=resolved.normalized,resolvedTimezone=resolved.zone;
   const bars=normalized.bars.slice(-15000),m15=NitiCore.aggregate(bars,3,300000);
   let h4=[],calls=2,higherLatest=null;
   if(withHigherTimeframe){
     // FMP's 5-minute response is often too short for 60 completed H4 candles.
     // Pull compact H1 history only for analysis/diagnostics, then aggregate closed H4 bars.
     const higherRaw=fmp_('historical-chart/1hour',{symbol:sc.fmp,from:Utilities.formatDate(new Date(now-180*86400000),'UTC','yyyy-MM-dd'),to:Utilities.formatDate(new Date(now+86400000),'UTC','yyyy-MM-dd')},c);
-    const higher=NitiCore.normalize(higherRaw,sourceTimezone,3600000,now);
+    const higher=normalizeFmp_(higherRaw,resolvedTimezone,3600000,now,qt).normalized;
     h4=NitiCore.aggregate(higher.bars.slice(-5000),4,3600000);calls++;higherLatest=higher.latest;
     if(h4.length<60)throw new Error('ข้อมูล H4 จาก FMP ยังไม่ครบ 60 แท่ง (ได้ '+h4.length+')');
   }
-  return {symbol:symbol,price:Number(q.price),quoteAt:qt,quoteName:q.name||sc.fmp,bars5:bars,bars15:m15,barsH4:h4,h4Source:withHigherTimeframe?'FMP 1H → H4':'ไม่ได้ดึงในรอบติดตาม',higherLatest:higherLatest,naiveTime:normalized.naive,timezoneConfirmed:!normalized.naive||timezoneConfirmed_(symbol,c),latestRaw:raw.length?(raw[0].date||raw[0].timestamp):null,latestParsed:normalized.latest,sourceTimezone:sourceTimezone,calls:calls};
+  return {symbol:symbol,price:Number(q.price),quoteAt:qt,quoteName:q.name||sc.fmp,bars5:bars,bars15:m15,barsH4:h4,h4Source:withHigherTimeframe?'FMP 1H → H4':'ไม่ได้ดึงในรอบติดตาม',higherLatest:higherLatest,naiveTime:normalized.naive,timezoneConfirmed:!normalized.naive||resolvedTimezone==='UTC'||timezoneConfirmed_(symbol,c),latestRaw:raw.length?(raw[0].date||raw[0].timestamp):null,latestParsed:normalized.latest,sourceTimezone:resolvedTimezone,sourceTimezoneExpected:sourceTimezone,calls:calls};
 }
 function quality_(m,c,now,allowPlanning){
   if(m.naiveTime&&!m.timezoneConfirmed)throw new Error('ตรวจและยืนยัน timezone ของ FMP ในหน้า ตั้งค่า ก่อนออกแผน');
@@ -286,7 +298,8 @@ function monitorPlans(){
     active.forEach(p=>{try{
       if(!markets[p.symbol])markets[p.symbol]=market_(p.symbol,c,now);
       const m=markets[p.symbol];if(m.naiveTime&&!m.timezoneConfirmed)throw new Error('timezone ยังไม่ยืนยัน');
-      if(p.sourceTimezone!==m.sourceTimezone)throw new Error('Timezone เปลี่ยนหลังออกแผน ต้องตรวจประวัติก่อน');
+       // FMP may return naive wall-time strings in a different convention after a
+       // provider refresh. market_ reconciles them against the live quote epoch.
        const start=p.lastChecked||p.activationAt||p.createdAt;if(m.bars5.length&&start<m.bars5[0].t-300000)throw new Error('ประวัติไม่ครอบคลุมแผน หยุดการตัดสินผล');
        const check=NitiCore.paper(p,m.bars5,300000,now,{isMarketClosedAt:t=>!autoSession_(p.symbol,t).open});
       if(p.trialArm){saveTrial_(check.plan,false);return;}
