@@ -1,4 +1,5 @@
 import { documentHtml } from "./document";
+import { premiumStyles } from "./premium";
 export const dynamic = "force-dynamic";
 export async function GET(){
  const brandedHtml=documentHtml
@@ -47,5 +48,6 @@ export async function GET(){
   });
 }());
 </script></body></html>`);
- return new Response(brandedHtml,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}});
+ const polishedHtml=brandedHtml.replace('</head>', '<style id="niti-premium">'+premiumStyles+'</style></head>');
+ return new Response(polishedHtml,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}});
 }
