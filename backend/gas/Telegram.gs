@@ -41,7 +41,7 @@ function telegramPlanMessage_(plan,context,ai,c){
   ].filter(x=>x!=='').join('\n');
 }
 function telegramEventMessage_(plan,event,c){
-  const labels={FILLED:'🟡 ราคาเข้าโซนแล้ว',TP:'✅ ปิดกำไรตาม TP',SL:'🛑 แตะ Stop Loss',EXPIRED:'⌛ แผนหมดอายุ',AMBIGUOUS:'⚠️ ผลจำลองกำกวม'};
+  const labels={FILLED:'🟡 ราคาเข้าโซนแล้ว',TP:'✅ ปิดกำไรตาม TP',SL:'🛑 แตะ Stop Loss',EXPIRED:'⌛ แผนหมดอายุ',CANCELLED:'⛔ ยกเลิกแผนที่ยังไม่เข้า',AMBIGUOUS:'⚠️ ผลจำลองกำกวม'};
   return [
     '<b>NITI TRADER · PAPER UPDATE</b>',
     '<b>'+telegramEsc_(plan.symbol)+'</b>  |  '+telegramEsc_(plan.side.replace('_',' ')),

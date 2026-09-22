@@ -185,7 +185,7 @@ var NitiCore = (function () {
       for(var t=start;t<end;t+=intervalMs)if(!closedAt(t))return false;
       return true;
     }
-    function event(status,t,note){p.status=status;events.push({status:status,time:t,note:note});if(['TP','SL','AMBIGUOUS','EXPIRED'].indexOf(status)>=0)p.closedAt=t;}
+    function event(status,t,note){p.status=status;events.push({status:status,time:t,note:note});if(['TP','SL','AMBIGUOUS','EXPIRED','CANCELLED'].indexOf(status)>=0)p.closedAt=t;if(status==='CANCELLED')p.cancelReason=note;}
     if(p.status==='PENDING'&&p.expiresAt&&now>=p.expiresAt&&((p.lastChecked||0)>=p.expiresAt||closedAt(p.expiresAt))){event('EXPIRED',p.expiresAt,'หมดอายุระหว่างช่วงตลาดปิดหรือไม่มีแท่งใหม่ที่ต้องตรวจ');return {plan:p,events:events};}
     for(var i=0;i<bars.length;i++) {
       var b=bars[i];if(b.t+intervalMs<=startAt||b.t<=(p.lastChecked||0)||b.t+intervalMs>now)continue;
@@ -201,11 +201,22 @@ var NitiCore = (function () {
         p.lastChecked=b.t;continue;
       }
       if(p.status==='PENDING'&&b.t>=p.expiresAt){event('EXPIRED',p.expiresAt,'หมดอายุก่อนเข้า');break;}
-      if(p.status==='PENDING'&&b.t+intervalMs>p.expiresAt){event('AMBIGUOUS',p.expiresAt,'แท่งคร่อมเวลาหมดอายุ ระบุลำดับไม่ได้');break;}
+      if(p.status==='PENDING'&&b.t+intervalMs>p.expiresAt){
+        var expiryTouch=side===1?b.l<=p.entry:b.h>=p.entry;
+        event(expiryTouch?'AMBIGUOUS':'EXPIRED',p.expiresAt,expiryTouch?'แท่งคร่อมเวลาหมดอายุและแตะ Entry ไม่ทราบลำดับ':'หมดอายุโดยแท่งคร่อมเวลาไม่แตะ Entry');break;
+      }
       var fresh=false,atOpen=false;
       // Reference OHLC, not broker bid/ask. Deduct stored round-trip cost ONCE in resultR.
       if(p.status==='PENDING') {
         var entryTouch=side===1?b.l<=p.entry:b.h>=p.entry;
+        // Evaluate chronologically: never erase a possible fill with cancellation.
+        var policy=p.pendingPolicy;
+        if(policy&&b.t>=policy.effectiveAt&&!entryTouch){
+          if(side===1?b.h>=p.tp:b.l<=p.tp){event('CANCELLED',b.t+intervalMs,'TP_BEFORE_ENTRY: ราคาถึง TP ก่อนเข้า แผน Paper ถูกยกเลิก; หากวาง Limit ที่โบรกเกอร์ต้องยกเลิกเอง');break;}
+          var far=number(policy.maxDistance)&&policy.maxDistance>0&&side*(b.c-p.entry)>policy.maxDistance;
+          p.pendingFarBars=far?(p.pendingFarBars||0)+1:0;
+          if(p.pendingFarBars>=2){event('CANCELLED',b.t+intervalMs,'PRICE_TOO_FAR: ราคาปิดห่าง Entry เกิน '+policy.maxDistance.toFixed(2)+' ต่อเนื่อง 2 แท่ง 5 นาที; ยกเลิกเฉพาะ Paper ไม่ใช่ออเดอร์โบรกเกอร์');break;}
+        }
         if(entryTouch){
           if(side===1?b.h<p.entry:b.l>p.entry){event('AMBIGUOUS',b.t+intervalMs,'ราคา gap เลย Entry ทั้งแท่ง ไม่ทราบราคา fill');break;}
           atOpen=side===1?b.o<=p.entry:b.o>=p.entry;event('FILLED',b.t+intervalMs,'จำลองจาก reference OHLC; เวลาเป็นเวลาปิดแท่งตรวจพบ');p.filledAt=b.t+intervalMs;fresh=true;
